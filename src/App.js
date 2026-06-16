@@ -20,11 +20,22 @@ const STATUS_META = {
   Cancelled:  { color: 'var(--red)',    bg: 'var(--red-dim)',  Icon: X },
 };
 
+const IN_STATUS_META = {
+  Received:   { color: 'var(--green)',  bg: 'var(--green-dim)', Icon: CheckCircle },
+  Pending:    { color: 'var(--amber)',  bg: 'var(--amber-dim)', Icon: Clock },
+  Ordered:    { color: 'var(--accent)', bg: 'var(--accent-dim)', Icon: Truck },
+  Cancelled:  { color: 'var(--red)',    bg: 'var(--red-dim)',  Icon: X },
+};
+
+function statusMetaFor(type) {
+  return type === 'in' ? IN_STATUS_META : STATUS_META;
+}
+
 const INITIAL_PRODUCTS = ['211G', 'Bwm 303', 'Bwm 777'];
 
 const SEED_ROWS = [
-  { id: uid(), date: '2026-06-11', description: 'Opening Stock', type: 'in',  customer: '', qty: { '211G': 2, 'Bwm 303': 0, 'Bwm 777': 0 }, status: '', memo: '' },
-  { id: uid(), date: '2026-06-11', description: 'Received from Somicon', type: 'in',  customer: '', qty: { '211G': 31, 'Bwm 303': 24, 'Bwm 777': 5 }, status: '', memo: '' },
+  { id: uid(), date: '2026-06-11', description: 'Opening Stock', type: 'in',  customer: '', qty: { '211G': 2, 'Bwm 303': 0, 'Bwm 777': 0 }, status: 'Received', memo: '' },
+  { id: uid(), date: '2026-06-11', description: 'Received from Somicon', type: 'in',  customer: '', qty: { '211G': 31, 'Bwm 303': 24, 'Bwm 777': 5 }, status: 'Received', memo: '' },
   { id: uid(), date: '2026-06-11', description: 'Sale', type: 'out', customer: 'Matar Al Kutbi', qty: { '211G': 0, 'Bwm 303': 4, 'Bwm 777': 0 }, status: 'Delivered', memo: '' },
   { id: uid(), date: '2026-06-12', description: 'Sale', type: 'out', customer: 'Omar Al Rahba', qty: { '211G': 10, 'Bwm 303': 0, 'Bwm 777': 0 }, status: 'Pending', memo: '' },
   { id: uid(), date: '2026-06-12', description: 'Sale', type: 'out', customer: 'Sultan Al Habtoor', qty: { '211G': 5, 'Bwm 303': 0, 'Bwm 777': 0 }, status: 'Pending', memo: '' },
@@ -61,8 +72,8 @@ function Modal({ title, onClose, children }) {
 }
 
 // ─── StatusBadge ─────────────────────────────────────────────────────────────
-function StatusBadge({ status }) {
-  const m = STATUS_META[status];
+function StatusBadge({ status, type }) {
+  const m = statusMetaFor(type)[status];
   if (!m) return <span className="status-empty">—</span>;
   const { Icon, color, bg } = m;
   return (
@@ -304,7 +315,7 @@ export default function App() {
         />
         <div className="filter-group">
           <span className="filter-label">Status</span>
-          {['All', ...Object.keys(STATUS_META)].map(s => (
+          {['All', ...new Set([...Object.keys(STATUS_META), ...Object.keys(IN_STATUS_META)])].map(s => (
             <button
               key={s}
               className={`filter-pill ${filterStatus === s ? 'active' : ''}`}
@@ -363,17 +374,15 @@ export default function App() {
                   })}
                   <td className="memo-cell">{row.memo || <span className="text-muted">—</span>}</td>
                   <td>
-                    {row.type === 'out' ? (
-                      <select
-                        className="status-select"
-                        value={row.status || ''}
-                        onChange={e => setStatus(row.id, e.target.value)}
-                        style={{ color: STATUS_META[row.status]?.color || 'var(--text-muted)' }}
-                      >
-                        <option value="">—</option>
-                        {Object.keys(STATUS_META).map(s => <option key={s} value={s}>{s}</option>)}
-                      </select>
-                    ) : <StatusBadge status={row.status} />}
+                    <select
+                      className="status-select"
+                      value={row.status || ''}
+                      onChange={e => setStatus(row.id, e.target.value)}
+                      style={{ color: statusMetaFor(row.type)[row.status]?.color || 'var(--text-muted)' }}
+                    >
+                      <option value="">—</option>
+                      {Object.keys(statusMetaFor(row.type)).map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
                   </td>
                   <td>
                     <div className="row-actions">
@@ -412,7 +421,18 @@ export default function App() {
               <input type="date" value={form.date} onChange={e => setForm(f => ({ ...f, date: e.target.value }))} />
             </label>
             <label>Type
-              <select value={form.type} onChange={e => setForm(f => ({ ...f, type: e.target.value }))}>
+              <select
+                value={form.type}
+                onChange={e => {
+                  const newType = e.target.value;
+                  const validStatuses = Object.keys(statusMetaFor(newType));
+                  setForm(f => ({
+                    ...f,
+                    type: newType,
+                    status: validStatuses.includes(f.status) ? f.status : validStatuses[1] || validStatuses[0],
+                  }));
+                }}
+              >
                 <option value="in">Stock In</option>
                 <option value="out">Stock Out (Sale)</option>
               </select>
@@ -438,13 +458,11 @@ export default function App() {
                 />
               </label>
             ))}
-            {form.type === 'out' && (
-              <label className="span2">Status
-                <select value={form.status} onChange={e => setForm(f => ({ ...f, status: e.target.value }))}>
-                  {Object.keys(STATUS_META).map(s => <option key={s}>{s}</option>)}
-                </select>
-              </label>
-            )}
+            <label className="span2">Status
+              <select value={form.status} onChange={e => setForm(f => ({ ...f, status: e.target.value }))}>
+                {Object.keys(statusMetaFor(form.type)).map(s => <option key={s}>{s}</option>)}
+              </select>
+            </label>
             <label className="span2">Memo / Notes
               <input
                 value={form.memo || ''}
