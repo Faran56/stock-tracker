@@ -1,10 +1,10 @@
 {
   "files": {
-    "main.css": "/Faran56/stock-tracker.git/static/css/main.0b3aae46.css",
-    "main.js": "/Faran56/stock-tracker.git/static/js/main.cb935f58.js",
-    "index.html": "/Faran56/stock-tracker.git/index.html",
-    "main.0b3aae46.css.map": "/Faran56/stock-tracker.git/static/css/main.0b3aae46.css.map",
-    "main.cb935f58.js.map": "/Faran56/stock-tracker.git/static/js/main.cb935f58.js.map"
+    "main.css": "/stock-tracker/static/css/main.0b3aae46.css",
+    "main.js": "/stock-tracker/static/js/main.cb935f58.js",
+    "index.html": "/stock-tracker/index.html",
+    "main.0b3aae46.css.map": "/stock-tracker/static/css/main.0b3aae46.css.map",
+    "main.cb935f58.js.map": "/stock-tracker/static/js/main.cb935f58.js.map"
   },
   "entrypoints": [
     "static/css/main.0b3aae46.css",
