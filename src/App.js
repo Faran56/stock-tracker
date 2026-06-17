@@ -3,8 +3,8 @@ import * as XLSX from 'xlsx';
 import Papa from 'papaparse';
 import {
   Plus, Upload, Trash2, Package, Users, TrendingDown,
-  ChevronDown, X, CheckCircle, Clock, Truck, AlertCircle,
-  Download, BarChart3, RefreshCw, Edit2
+  X, CheckCircle, Clock, Truck, AlertCircle,
+  Download, RefreshCw, Edit2
 } from 'lucide-react';
 import './App.css';
 
@@ -68,18 +68,6 @@ function Modal({ title, onClose, children }) {
         <div className="modal-body">{children}</div>
       </div>
     </div>
-  );
-}
-
-// ─── StatusBadge ─────────────────────────────────────────────────────────────
-function StatusBadge({ status, type }) {
-  const m = statusMetaFor(type)[status];
-  if (!m) return <span className="status-empty">—</span>;
-  const { Icon, color, bg } = m;
-  return (
-    <span className="status-badge" style={{ color, background: bg }}>
-      <Icon size={11} />{status}
-    </span>
   );
 }
 
