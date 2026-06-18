@@ -13,12 +13,14 @@ const today = () => new Date().toISOString().slice(0, 10);
 
 const COLORS = ['#4f7dff', '#22c55e', '#f59e0b', '#ef4444', '#a855f7', '#06b6d4', '#ec4899', '#84cc16'];
 
-function rowProfit(r, products) {
+function rowProfit(r, products, itemDefaults) {
   let revenue = 0, cost = 0, qtyTotal = 0;
   products.forEach(p => {
     const qty = Number(r.qty?.[p] || 0);
-    const price = Number(r.price?.[p] || 0);
-    const unitCost = Number(r.cost?.[p] || 0);
+    let price = Number(r.price?.[p] || 0);
+    let unitCost = Number(r.cost?.[p] || 0);
+    if (!price) price = Number(itemDefaults?.[p]?.price) || 0;
+    if (!unitCost) unitCost = Number(itemDefaults?.[p]?.cost) || 0;
     revenue += qty * price;
     cost += qty * unitCost;
     qtyTotal += qty;
@@ -26,7 +28,7 @@ function rowProfit(r, products) {
   return { revenue, cost, profit: revenue - cost, qtyTotal };
 }
 
-export default function Reports({ rows, products }) {
+export default function Reports({ rows, products, itemDefaults }) {
   const [exportNote, setExportNote] = useState(null);
 
   // ── compute profit per row, then aggregate ──────────────────────────────
@@ -36,7 +38,7 @@ export default function Reports({ rows, products }) {
     const map = {};
     saleRows.forEach(r => {
       const key = r.customer || 'Unknown';
-      const { revenue, cost, profit, qtyTotal } = rowProfit(r, products);
+      const { revenue, cost, profit, qtyTotal } = rowProfit(r, products, itemDefaults);
       if (!map[key]) map[key] = { name: key, revenue: 0, cost: 0, profit: 0, orders: 0, qty: 0 };
       map[key].revenue += revenue;
       map[key].cost += cost;
@@ -45,7 +47,7 @@ export default function Reports({ rows, products }) {
       map[key].qty += qtyTotal;
     });
     return Object.values(map).sort((a, b) => b.profit - a.profit);
-  }, [saleRows, products]);
+  }, [saleRows, products, itemDefaults]);
 
   const byProduct = useMemo(() => {
     const map = {};
@@ -54,8 +56,10 @@ export default function Reports({ rows, products }) {
       products.forEach(p => {
         const qty = Number(r.qty?.[p] || 0);
         if (!qty) return;
-        const price = Number(r.price?.[p] || 0);
-        const unitCost = Number(r.cost?.[p] || 0);
+        let price = Number(r.price?.[p] || 0);
+        let unitCost = Number(r.cost?.[p] || 0);
+        if (!price) price = Number(itemDefaults?.[p]?.price) || 0;
+        if (!unitCost) unitCost = Number(itemDefaults?.[p]?.cost) || 0;
         map[p].revenue += qty * price;
         map[p].cost += qty * unitCost;
         map[p].profit += qty * (price - unitCost);
@@ -63,17 +67,17 @@ export default function Reports({ rows, products }) {
       });
     });
     return Object.values(map).sort((a, b) => b.profit - a.profit);
-  }, [saleRows, products]);
+  }, [saleRows, products, itemDefaults]);
 
   const totals = useMemo(() => {
     return saleRows.reduce((acc, r) => {
-      const { revenue, cost, profit } = rowProfit(r, products);
+      const { revenue, cost, profit } = rowProfit(r, products, itemDefaults);
       acc.revenue += revenue;
       acc.cost += cost;
       acc.profit += profit;
       return acc;
     }, { revenue: 0, cost: 0, profit: 0 });
-  }, [saleRows, products]);
+  }, [saleRows, products, itemDefaults]);
 
   const margin = totals.revenue > 0 ? (totals.profit / totals.revenue) * 100 : 0;
 
