@@ -7,7 +7,7 @@ import {
   Plus, Upload, Trash2, Package, Users, TrendingDown,
   X, CheckCircle, Clock, Truck, AlertCircle,
   Download, RefreshCw, Edit2, ArrowUp, ArrowDown, ArrowUpDown,
-  FileText, Truck as TruckIcon, BarChart3, ListChecks,
+  FileText, Truck as TruckIcon, BarChart3, ListChecks, Tag,
 } from 'lucide-react';
 import Reports from './Reports';
 import './App.css';
@@ -49,10 +49,20 @@ const SEED_ROWS = [
 ];
 
 // ─── load / save ─────────────────────────────────────────────────────────────
+function defaultItemDefaults(prods) {
+  const d = {};
+  prods.forEach(p => (d[p] = { cost: '', price: '' }));
+  return d;
+}
+
 function loadState() {
   try {
     const s = localStorage.getItem('stock_v3');
-    if (s) return JSON.parse(s);
+    if (s) {
+      const parsed = JSON.parse(s);
+      if (!parsed.itemDefaults) parsed.itemDefaults = defaultItemDefaults(parsed.products || INITIAL_PRODUCTS);
+      return parsed;
+    }
     // migrate from v2 if present
     const old = localStorage.getItem('stock_v2');
     if (old) {
@@ -60,10 +70,10 @@ function loadState() {
       const rows = (parsed.rows || []).map(r => ({
         supplier: '', invoiceNo: '', deliveryNo: '', price: {}, cost: {}, ...r,
       }));
-      return { ...parsed, rows, suppliers: [] };
+      return { ...parsed, rows, suppliers: [], itemDefaults: defaultItemDefaults(parsed.products || INITIAL_PRODUCTS) };
     }
   } catch {}
-  return { products: INITIAL_PRODUCTS, rows: SEED_ROWS, customers: [], suppliers: [] };
+  return { products: INITIAL_PRODUCTS, rows: SEED_ROWS, customers: [], suppliers: [], itemDefaults: defaultItemDefaults(INITIAL_PRODUCTS) };
 }
 function saveState(state) {
   localStorage.setItem('stock_v3', JSON.stringify(state));
@@ -87,9 +97,9 @@ function Modal({ title, onClose, children, wide }) {
 // ─── App ─────────────────────────────────────────────────────────────────────
 export default function App() {
   const [state, setState] = useState(loadState);
-  const { products, rows, customers, suppliers } = state;
+  const { products, rows, customers, suppliers, itemDefaults } = state;
 
-  const [activeTab, setActiveTab] = useState('tracker'); // tracker | suppliers | reports
+  const [activeTab, setActiveTab] = useState('tracker'); // tracker | items | suppliers | reports
 
   const [showAddRow, setShowAddRow]   = useState(false);
   const [showAddProd, setShowAddProd] = useState(false);
@@ -112,7 +122,11 @@ export default function App() {
 
   function buildEmptyForm(prods) {
     const qty = {}, price = {}, cost = {};
-    prods.forEach(p => { qty[p] = ''; price[p] = ''; cost[p] = ''; });
+    prods.forEach(p => {
+      qty[p] = '';
+      price[p] = itemDefaults?.[p]?.price || '';
+      cost[p] = itemDefaults?.[p]?.cost || '';
+    });
     return {
       date: today(), description: 'Sale', type: 'out', customer: '', supplier: '',
       invoiceNo: '', deliveryNo: '', qty, price, cost, status: 'Pending', memo: '',
@@ -196,8 +210,14 @@ export default function App() {
     const cleanQty = {}, cleanPrice = {}, cleanCost = {};
     products.forEach(p => {
       cleanQty[p] = Number(form.qty[p]) || 0;
-      cleanPrice[p] = Number(form.price[p]) || 0;
-      cleanCost[p] = Number(form.cost[p]) || 0;
+      const priceVal = form.price[p];
+      const costVal = form.cost[p];
+      cleanPrice[p] = (priceVal === '' || priceVal == null)
+        ? (Number(itemDefaults?.[p]?.price) || 0)
+        : Number(priceVal) || 0;
+      cleanCost[p] = (costVal === '' || costVal == null)
+        ? (Number(itemDefaults?.[p]?.cost) || 0)
+        : Number(costVal) || 0;
     });
 
     if (editingId) {
@@ -255,10 +275,22 @@ export default function App() {
         price: { ...r.price, [name]: 0 },
         cost: { ...r.cost, [name]: 0 },
       })),
+      itemDefaults: { ...s.itemDefaults, [name]: { cost: '', price: '' } },
     }));
     setNewProd('');
     setShowAddProd(false);
     showToast(`Product "${name}" added`);
+  }
+
+  // ── item defaults (cost/price) ──────────────────────────────────────────────
+  function updateItemDefault(product, field, value) {
+    setState(s => ({
+      ...s,
+      itemDefaults: {
+        ...s.itemDefaults,
+        [product]: { ...s.itemDefaults?.[product], [field]: value },
+      },
+    }));
   }
 
   // ── customer file upload ───────────────────────────────────────────────────
@@ -396,7 +428,7 @@ export default function App() {
         <div className="header-left">
           <div className="logo-mark"><Package size={20} /></div>
           <div>
-            <h1>Hello Faran @ Super Quality Stock Tracking</h1>
+            <h1>Stock Tracker</h1>
             <p className="header-sub">Water Treatment Products · UAE</p>
           </div>
         </div>
@@ -423,6 +455,9 @@ export default function App() {
       <div className="tab-nav">
         <button className={`tab-btn ${activeTab === 'tracker' ? 'active' : ''}`} onClick={() => setActiveTab('tracker')}>
           <ListChecks size={15} /> Tracker
+        </button>
+        <button className={`tab-btn ${activeTab === 'items' ? 'active' : ''}`} onClick={() => setActiveTab('items')}>
+          <Tag size={15} /> Items
         </button>
         <button className={`tab-btn ${activeTab === 'suppliers' ? 'active' : ''}`} onClick={() => setActiveTab('suppliers')}>
           <TruckIcon size={15} /> Suppliers
@@ -572,6 +607,58 @@ export default function App() {
         </>
       )}
 
+      {activeTab === 'items' && (
+        <div className="items-page">
+          <div className="items-header">
+            <h2>Item Defaults</h2>
+            <p className="items-sub">Set a default cost and sale price per product. These auto-fill new transactions but can be overridden anytime. Reports use these as a fallback whenever a transaction has no cost/price entered.</p>
+          </div>
+          <div className="items-table-wrap">
+            <table className="items-table">
+              <thead>
+                <tr>
+                  <th>Product</th>
+                  <th className="num-col">Default Cost/Unit</th>
+                  <th className="num-col">Default Sale Price/Unit</th>
+                  <th className="num-col">Default Margin</th>
+                </tr>
+              </thead>
+              <tbody>
+                {products.map(p => {
+                  const cost = Number(itemDefaults?.[p]?.cost) || 0;
+                  const price = Number(itemDefaults?.[p]?.price) || 0;
+                  const marginPct = price > 0 ? ((price - cost) / price) * 100 : 0;
+                  return (
+                    <tr key={p}>
+                      <td className="customer-cell">{p}</td>
+                      <td className="num-col">
+                        <input
+                          type="number" min="0" step="0.01" placeholder="0.00"
+                          value={itemDefaults?.[p]?.cost ?? ''}
+                          onChange={e => updateItemDefault(p, 'cost', e.target.value)}
+                          className="items-input"
+                        />
+                      </td>
+                      <td className="num-col">
+                        <input
+                          type="number" min="0" step="0.01" placeholder="0.00"
+                          value={itemDefaults?.[p]?.price ?? ''}
+                          onChange={e => updateItemDefault(p, 'price', e.target.value)}
+                          className="items-input"
+                        />
+                      </td>
+                      <td className={`num-col ${marginPct < 0 ? 'neg-text' : 'profit-text'}`}>
+                        {price > 0 ? `${marginPct.toFixed(1)}%` : '—'}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       {activeTab === 'suppliers' && (
         <div className="suppliers-page">
           <div className="suppliers-header">
@@ -601,7 +688,7 @@ export default function App() {
         </div>
       )}
 
-      {activeTab === 'reports' && <Reports rows={rows} products={products} />}
+      {activeTab === 'reports' && <Reports rows={rows} products={products} itemDefaults={itemDefaults} />}
 
       {/* ── Add/Edit Transaction Modal ── */}
       {showAddRow && (
@@ -668,13 +755,15 @@ export default function App() {
                   />
                   {form.type === 'out' ? (
                     <input
-                      type="number" min="0" step="0.01" placeholder="0.00"
+                      type="number" min="0" step="0.01"
+                      placeholder={itemDefaults?.[p]?.price ? `${itemDefaults[p].price} (default)` : '0.00'}
                       value={form.price[p]}
                       onChange={e => setForm(f => ({ ...f, price: { ...f.price, [p]: e.target.value } }))}
                     />
                   ) : (
                     <input
-                      type="number" min="0" step="0.01" placeholder="0.00"
+                      type="number" min="0" step="0.01"
+                      placeholder={itemDefaults?.[p]?.cost ? `${itemDefaults[p].cost} (default)` : '0.00'}
                       value={form.cost[p]}
                       onChange={e => setForm(f => ({ ...f, cost: { ...f.cost, [p]: e.target.value } }))}
                     />
