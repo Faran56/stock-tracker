@@ -17,6 +17,13 @@ const today = () => new Date().toISOString().slice(0, 10);
 const fmt = (n) => (n == null || n === '' ? '—' : Number(n).toLocaleString());
 const uid = () => Math.random().toString(36).slice(2, 9);
 
+const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+function monthLabel(m) {
+  if (!m) return '';
+  const [y, mo] = m.split('-');
+  return `${MONTH_NAMES[Number(mo) - 1]} ${y}`;
+}
+
 const STATUS_META = {
   Delivered:  { color: 'var(--green)',  bg: 'var(--green-dim)', Icon: CheckCircle },
   Pending:    { color: 'var(--amber)',  bg: 'var(--amber-dim)', Icon: Clock },
@@ -113,6 +120,7 @@ export default function App() {
   const [sortBy, setSortBy] = useState('date');
   const [sortDir, setSortDir] = useState('desc');
   const [newSupplier, setNewSupplier] = useState('');
+  const [selectedMonth, setSelectedMonth] = useState('All');
 
   // form state
   const [form, setForm] = useState(() => buildEmptyForm(INITIAL_PRODUCTS));
@@ -162,8 +170,13 @@ export default function App() {
   }
   const totals = computeBalance();
 
+  // ── months ─────────────────────────────────────────────────────────────────
+  const availableMonths = [...new Set(rows.map(r => (r.date || '').slice(0, 7)).filter(Boolean))]
+    .sort((a, b) => b.localeCompare(a));
+
   // ── filters ────────────────────────────────────────────────────────────────
   const filtered = rows.filter(r => {
+    if (selectedMonth !== 'All' && (r.date || '').slice(0, 7) !== selectedMonth) return false;
     if (filterStatus !== 'All' && r.status !== filterStatus) return false;
     if (filterProduct !== 'All' && !Number(r.qty?.[filterProduct])) return false;
     if (search) {
@@ -414,9 +427,51 @@ export default function App() {
     showToast('Exported to PDF');
   }
 
+  function exportBalanceXLSX() {
+    const data = products.map(p => ({
+      Product: p,
+      'Total In': totalIn[p] || 0,
+      'Total Out': totalOut[p] || 0,
+      'Current Balance': totals[p] || 0,
+    }));
+    const ws = XLSX.utils.json_to_sheet(data);
+    XLSX.utils.sheet_add_aoa(ws, [[`Balance Stock — Generated ${today()}`]], { origin: -1 });
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Balance');
+    XLSX.writeFile(wb, `balance_stock_${today()}.xlsx`);
+    showToast('Balance stock exported');
+  }
+
+  function exportBalancePDF() {
+    const doc = new jsPDF();
+    doc.setFontSize(16);
+    doc.text('Balance Stock Report', 14, 16);
+    doc.setFontSize(10);
+    doc.setTextColor(120);
+    doc.text(`Generated: ${today()}`, 14, 22);
+
+    const head = [['Product', 'Total In', 'Total Out', 'Current Balance']];
+    const body = products.map(p => [p, fmt(totalIn[p] || 0), fmt(totalOut[p] || 0), fmt(totals[p] || 0)]);
+
+    autoTable(doc, {
+      head, body,
+      startY: 28,
+      styles: { fontSize: 9, cellPadding: 4 },
+      headStyles: { fillColor: [79, 125, 255] },
+      alternateRowStyles: { fillColor: [245, 246, 250] },
+    });
+
+    doc.save(`balance_stock_${today()}.pdf`);
+    showToast('Balance stock exported');
+  }
+
   // ── summary cards ──────────────────────────────────────────────────────────
   const pendingCount = rows.filter(r => r.status === 'Pending').length;
   const totalOut = rows.filter(r => r.type === 'out').reduce((acc, r) => {
+    products.forEach(p => (acc[p] = (acc[p] || 0) + (r.qty[p] || 0)));
+    return acc;
+  }, {});
+  const totalIn = rows.filter(r => r.type === 'in').reduce((acc, r) => {
     products.forEach(p => (acc[p] = (acc[p] || 0) + (r.qty[p] || 0)));
     return acc;
   }, {});
@@ -444,6 +499,14 @@ export default function App() {
             <button className="btn btn-ghost" onClick={exportPDF}>
               <FileText size={15} /> PDF
             </button>
+            <div className="split-btn">
+              <button className="btn btn-ghost split-btn-main" onClick={exportBalanceXLSX}>
+                <Package size={15} /> Balance
+              </button>
+              <button className="btn btn-ghost split-btn-side" onClick={exportBalancePDF} title="Download balance as PDF">
+                <FileText size={13} />
+              </button>
+            </div>
             <button className="btn btn-accent" onClick={openAddRow}>
               <Plus size={15} /> Add Transaction
             </button>
@@ -502,6 +565,19 @@ export default function App() {
               value={search}
               onChange={e => setSearch(e.target.value)}
             />
+            <div className="filter-group">
+              <span className="filter-label">Month</span>
+              <select
+                className="month-select"
+                value={selectedMonth}
+                onChange={e => setSelectedMonth(e.target.value)}
+              >
+                <option value="All">All months</option>
+                {availableMonths.map(m => (
+                  <option key={m} value={m}>{monthLabel(m)}</option>
+                ))}
+              </select>
+            </div>
             <div className="filter-group">
               <span className="filter-label">Status</span>
               {['All', ...new Set([...Object.keys(STATUS_META), ...Object.keys(IN_STATUS_META)])].map(s => (
