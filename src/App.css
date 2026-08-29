@@ -268,10 +268,67 @@
 .reports-wrap { padding: 24px 28px; }
 .reports-header {
   display: flex; align-items: center; justify-content: space-between;
-  margin-bottom: 20px;
+  margin-bottom: 20px; flex-wrap: wrap; gap: 12px;
 }
 .reports-header h2 { font-size: 18px; font-weight: 700; }
-.reports-actions { display: flex; gap: 8px; }
+.reports-sub { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+.reports-actions { display: flex; gap: 8px; align-items: center; }
+
+.spin { animation: spin 0.8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── AI insights card ───────────────────────────────────────────────────── */
+.insights-card {
+  background: linear-gradient(135deg, rgba(79,125,255,0.08), rgba(168,85,247,0.06));
+  border: 1px solid var(--border); border-radius: 14px;
+  padding: 18px 20px; margin-bottom: 20px;
+}
+.insights-header {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 13.5px; font-weight: 700; color: var(--text);
+  margin-bottom: 12px;
+}
+.insights-list { display: flex; flex-direction: column; gap: 8px; }
+.insight-item {
+  display: flex; align-items: flex-start; gap: 9px;
+  padding: 10px 12px; border-radius: 10px;
+  font-size: 13px; line-height: 1.45; color: var(--text-sub);
+}
+
+/* ── high profit product highlights ─────────────────────────────────────── */
+.highlight-strip { display: flex; gap: 14px; margin-bottom: 24px; flex-wrap: wrap; }
+.highlight-card {
+  flex: 1; min-width: 180px;
+  background: linear-gradient(160deg, var(--surface2), var(--surface));
+  border: 1px solid var(--amber); border-radius: 12px;
+  padding: 16px;
+}
+.highlight-rank {
+  display: flex; align-items: center; gap: 5px;
+  font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px;
+  color: var(--amber); margin-bottom: 8px;
+}
+.highlight-name { font-size: 15px; font-weight: 700; margin-bottom: 4px; }
+.highlight-profit { font-family: var(--mono); font-size: 22px; font-weight: 700; color: var(--green); }
+.highlight-sub { font-size: 11.5px; color: var(--text-muted); margin-top: 4px; }
+
+.crown-badge {
+  display: inline-flex; align-items: center; gap: 3px;
+  background: var(--amber-dim); color: var(--amber);
+  border-radius: 8px; font-size: 10px; font-weight: 700;
+  padding: 1px 6px; margin-left: 8px; vertical-align: middle;
+}
+
+.kpi-delta {
+  display: flex; align-items: center; gap: 3px;
+  font-size: 10.5px; font-weight: 600; margin-top: 4px;
+}
+.kpi-delta.up { color: var(--green); }
+.kpi-delta.down { color: var(--red); }
+
+.chart-card--wide { grid-column: 1 / -1; margin-bottom: 24px; }
+
+.row-loss td { background: var(--red-dim); }
 
 .kpi-strip { display: flex; gap: 14px; margin-bottom: 24px; flex-wrap: wrap; }
 .kpi-card {
