@@ -3,47 +3,64 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
-  --bg: #0f1117;
-  --surface: #1a1d27;
-  --surface2: #22263a;
-  --border: #2e3250;
-  --accent: #4f7dff;
-  --accent-dim: rgba(79,125,255,0.12);
+  --bg: #0d0f16;
+  --surface: #171a24;
+  --surface2: #1f2333;
+  --surface3: #262b40;
+  --border: #2c3049;
+  --border-soft: #23273a;
+  --accent: #5b7fff;
+  --accent-2: #8b5cf6;
+  --accent-dim: rgba(91,127,255,0.13);
+  --accent-gradient: linear-gradient(135deg, #5b7fff, #8b5cf6);
   --green: #22c55e;
   --green-dim: rgba(34,197,94,0.12);
-  --red: #ef4444;
-  --red-dim: rgba(239,68,68,0.12);
-  --amber: #f59e0b;
-  --amber-dim: rgba(245,158,11,0.12);
-  --text: #e8eaf6;
+  --red: #f0596b;
+  --red-dim: rgba(240,89,107,0.13);
+  --amber: #f2a93b;
+  --amber-dim: rgba(242,169,59,0.13);
+  --text: #eef0fa;
   --text-muted: #6b7280;
   --text-sub: #9ca3af;
   --mono: 'JetBrains Mono', monospace;
   --sans: 'Inter', sans-serif;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.3);
+  --shadow-md: 0 6px 20px rgba(0,0,0,0.28);
+  --shadow-lg: 0 16px 40px rgba(0,0,0,0.45);
 }
 
 body {
   font-family: var(--sans);
-  background: var(--bg);
+  background:
+    radial-gradient(1200px 600px at 100% -10%, rgba(91,127,255,0.07), transparent 60%),
+    radial-gradient(1000px 600px at -10% 10%, rgba(139,92,246,0.05), transparent 55%),
+    var(--bg);
   color: var(--text);
   min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
 }
 
-::-webkit-scrollbar { width: 6px; height: 6px; }
-::-webkit-scrollbar-track { background: var(--surface); }
-::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar { width: 7px; height: 7px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: var(--accent); }
 
 input, select, textarea {
   font-family: var(--sans);
   background: var(--surface2);
   border: 1px solid var(--border);
   color: var(--text);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   padding: 8px 12px;
   font-size: 14px;
   outline: none;
-  transition: border-color 0.15s;
+  transition: border-color 0.15s, box-shadow 0.15s;
 }
-input:focus, select:focus { border-color: var(--accent); }
+input:focus, select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-dim); }
+input::placeholder { color: var(--text-muted); }
 select option { background: var(--surface2); }
 button { font-family: var(--sans); cursor: pointer; }
+h1, h2, h3 { letter-spacing: -0.3px; }
