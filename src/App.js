@@ -1,11 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import Papa from 'papaparse';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import {
   Plus, Upload, Trash2, Package, Users, TrendingDown,
-  X, CheckCircle, Clock, Truck, AlertCircle,
+  X, CheckCircle, Clock, Truck, AlertCircle, Search,
   Download, RefreshCw, Edit2, ArrowUp, ArrowDown, ArrowUpDown,
   FileText, Truck as TruckIcon, BarChart3, ListChecks, Tag,
 } from 'lucide-react';
@@ -16,6 +16,7 @@ import './App.css';
 const today = () => new Date().toISOString().slice(0, 10);
 const fmt = (n) => (n == null || n === '' ? '—' : Number(n).toLocaleString());
 const uid = () => Math.random().toString(36).slice(2, 9);
+const DEFAULT_CATEGORY = 'General';
 
 const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 function monthLabel(m) {
@@ -58,7 +59,7 @@ const SEED_ROWS = [
 // ─── load / save ─────────────────────────────────────────────────────────────
 function defaultItemDefaults(prods) {
   const d = {};
-  prods.forEach(p => (d[p] = { cost: '', price: '' }));
+  prods.forEach(p => (d[p] = { cost: '', price: '', category: DEFAULT_CATEGORY }));
   return d;
 }
 
@@ -68,6 +69,14 @@ function loadState() {
     if (s) {
       const parsed = JSON.parse(s);
       if (!parsed.itemDefaults) parsed.itemDefaults = defaultItemDefaults(parsed.products || INITIAL_PRODUCTS);
+      // migrate: ensure every product has a category, and a categories list exists
+      const cats = new Set(parsed.categories || [DEFAULT_CATEGORY]);
+      (parsed.products || []).forEach(p => {
+        if (!parsed.itemDefaults[p]) parsed.itemDefaults[p] = { cost: '', price: '', category: DEFAULT_CATEGORY };
+        if (!parsed.itemDefaults[p].category) parsed.itemDefaults[p].category = DEFAULT_CATEGORY;
+        cats.add(parsed.itemDefaults[p].category);
+      });
+      parsed.categories = [...cats];
       return parsed;
     }
     // migrate from v2 if present
@@ -77,20 +86,30 @@ function loadState() {
       const rows = (parsed.rows || []).map(r => ({
         supplier: '', invoiceNo: '', deliveryNo: '', price: {}, cost: {}, ...r,
       }));
-      return { ...parsed, rows, suppliers: [], itemDefaults: defaultItemDefaults(parsed.products || INITIAL_PRODUCTS) };
+      return {
+        ...parsed, rows, suppliers: [],
+        itemDefaults: defaultItemDefaults(parsed.products || INITIAL_PRODUCTS),
+        categories: [DEFAULT_CATEGORY],
+      };
     }
   } catch {}
-  return { products: INITIAL_PRODUCTS, rows: SEED_ROWS, customers: [], suppliers: [], itemDefaults: defaultItemDefaults(INITIAL_PRODUCTS) };
+  return {
+    products: INITIAL_PRODUCTS, rows: SEED_ROWS, customers: [], suppliers: [],
+    itemDefaults: defaultItemDefaults(INITIAL_PRODUCTS), categories: [DEFAULT_CATEGORY],
+  };
 }
 function saveState(state) {
   localStorage.setItem('stock_v3', JSON.stringify(state));
 }
 
 // ─── Modal ───────────────────────────────────────────────────────────────────
+// Note: clicking the dimmed backdrop intentionally does NOT close the modal —
+// this avoids accidentally losing an in-progress transaction. Use the X button
+// or a Cancel button in the footer to close.
 function Modal({ title, onClose, children, wide }) {
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className={`modal-box ${wide ? 'modal-box--wide' : ''}`} onClick={e => e.stopPropagation()}>
+    <div className="modal-backdrop">
+      <div className={`modal-box ${wide ? 'modal-box--wide' : ''}`}>
         <div className="modal-header">
           <span>{title}</span>
           <button className="icon-btn" onClick={onClose}><X size={18} /></button>
@@ -101,10 +120,67 @@ function Modal({ title, onClose, children, wide }) {
   );
 }
 
+// ─── SearchableSelect ──────────────────────────────────────────────────────
+// A type-to-filter combobox used for Customer, Supplier and Category fields.
+// Typing text that doesn't match an existing option offers to add it as new
+// (when allowCreate is true), so lists grow naturally as data is entered.
+function SearchableSelect({ value, onChange, onCreate, options, placeholder, allowCreate = true }) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState(value || '');
+  const wrapRef = useRef(null);
+
+  useEffect(() => { setQuery(value || ''); }, [value]);
+
+  useEffect(() => {
+    function onDocClick(e) {
+      if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false);
+    }
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
+  }, []);
+
+  const q = query.toLowerCase().trim();
+  const filtered = q ? options.filter(o => o.toLowerCase().includes(q)) : options;
+  const exactMatch = options.some(o => o.toLowerCase() === q);
+
+  function choose(opt) {
+    setQuery(opt);
+    onChange(opt);
+    setOpen(false);
+  }
+
+  return (
+    <div className="searchable-select" ref={wrapRef}>
+      <input
+        value={query}
+        placeholder={placeholder}
+        onFocus={() => setOpen(true)}
+        onChange={e => { setQuery(e.target.value); onChange(e.target.value); setOpen(true); }}
+      />
+      {open && (
+        <div className="searchable-dropdown">
+          {filtered.slice(0, 50).map(opt => (
+            <div key={opt} className="searchable-option" onMouseDown={() => choose(opt)}>{opt}</div>
+          ))}
+          {filtered.length === 0 && !allowCreate && <div className="searchable-empty">No matches</div>}
+          {allowCreate && query.trim() && !exactMatch && (
+            <div
+              className="searchable-option searchable-create"
+              onMouseDown={() => { onCreate && onCreate(query.trim()); choose(query.trim()); }}
+            >
+              <Plus size={12} style={{ verticalAlign: -1, marginRight: 4 }} /> Add "{query.trim()}"
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── App ─────────────────────────────────────────────────────────────────────
 export default function App() {
   const [state, setState] = useState(loadState);
-  const { products, rows, customers, suppliers, itemDefaults } = state;
+  const { products, rows, customers, suppliers, itemDefaults, categories } = state;
 
   const [activeTab, setActiveTab] = useState('tracker'); // tracker | items | suppliers | reports
 
@@ -121,6 +197,7 @@ export default function App() {
   const [sortDir, setSortDir] = useState('desc');
   const [newSupplier, setNewSupplier] = useState('');
   const [selectedMonth, setSelectedMonth] = useState('All');
+  const [productFilter, setProductFilter] = useState('');
 
   // form state
   const [form, setForm] = useState(() => buildEmptyForm(INITIAL_PRODUCTS));
@@ -233,17 +310,27 @@ export default function App() {
         : Number(costVal) || 0;
     });
 
+    const custName = form.customer?.trim();
+    const supName = form.supplier?.trim();
+
     if (editingId) {
       setState(s => ({
         ...s,
         rows: s.rows.map(r => r.id === editingId
           ? { ...form, qty: cleanQty, price: cleanPrice, cost: cleanCost, id: editingId }
           : r),
+        customers: (custName && !s.customers.includes(custName)) ? [...s.customers, custName] : s.customers,
+        suppliers: (supName && !s.suppliers.includes(supName)) ? [...s.suppliers, supName] : s.suppliers,
       }));
       showToast('Transaction updated');
     } else {
       const row = { ...form, qty: cleanQty, price: cleanPrice, cost: cleanCost, id: uid() };
-      setState(s => ({ ...s, rows: [...s.rows, row] }));
+      setState(s => ({
+        ...s,
+        rows: [...s.rows, row],
+        customers: (custName && !s.customers.includes(custName)) ? [...s.customers, custName] : s.customers,
+        suppliers: (supName && !s.suppliers.includes(supName)) ? [...s.suppliers, supName] : s.suppliers,
+      }));
       showToast('Transaction added');
     }
 
@@ -255,13 +342,28 @@ export default function App() {
   function openAddRow() {
     setForm(buildEmptyForm(products));
     setEditingId(null);
+    setProductFilter('');
     setShowAddRow(true);
   }
 
   function openEditRow(row) {
     setForm(buildFormFromRow(row, products));
     setEditingId(row.id);
+    setProductFilter('');
     setShowAddRow(true);
+  }
+
+  // ── products grouped by category (for the transaction modal & items page) ──
+  function groupProductsByCategory(prods) {
+    const groups = {};
+    prods.forEach(p => {
+      const cat = itemDefaults?.[p]?.category || DEFAULT_CATEGORY;
+      if (!groups[cat]) groups[cat] = [];
+      groups[cat].push(p);
+    });
+    // keep category order stable using the master categories list, then any leftovers
+    const orderedCats = [...categories.filter(c => groups[c]), ...Object.keys(groups).filter(c => !categories.includes(c))];
+    return orderedCats.map(cat => ({ category: cat, items: groups[cat] }));
   }
 
   // ── delete row ─────────────────────────────────────────────────────────────
@@ -288,7 +390,7 @@ export default function App() {
         price: { ...r.price, [name]: 0 },
         cost: { ...r.cost, [name]: 0 },
       })),
-      itemDefaults: { ...s.itemDefaults, [name]: { cost: '', price: '' } },
+      itemDefaults: { ...s.itemDefaults, [name]: { cost: '', price: '', category: DEFAULT_CATEGORY } },
     }));
     setNewProd('');
     setShowAddProd(false);
@@ -349,16 +451,47 @@ export default function App() {
     });
   }
 
-  function addSupplierManual() {
-    const name = newSupplier.trim();
+  function addSupplier(name) {
     if (!name || suppliers.includes(name)) return;
     setState(s => ({ ...s, suppliers: [...s.suppliers, name] }));
+  }
+
+  function addSupplierManual() {
+    const name = newSupplier.trim();
+    if (!name) return;
+    addSupplier(name);
     setNewSupplier('');
     showToast(`Supplier "${name}" added`);
   }
 
   function removeSupplier(name) {
     setState(s => ({ ...s, suppliers: s.suppliers.filter(x => x !== name) }));
+  }
+
+  // ── customer creation (from the searchable customer field) ────────────────
+  function addCustomer(name) {
+    if (!name || customers.includes(name)) return;
+    setState(s => ({ ...s, customers: [...s.customers, name] }));
+    showToast(`Customer "${name}" added`);
+  }
+
+  // ── category creation / assignment ─────────────────────────────────────────
+  function addCategory(name) {
+    if (!name || categories.includes(name)) return;
+    setState(s => ({ ...s, categories: [...s.categories, name] }));
+    showToast(`Category "${name}" added`);
+  }
+
+  function setItemCategory(product, category) {
+    if (!categories.includes(category)) {
+      setState(s => ({
+        ...s,
+        categories: [...s.categories, category],
+        itemDefaults: { ...s.itemDefaults, [product]: { ...s.itemDefaults?.[product], category } },
+      }));
+    } else {
+      updateItemDefault(product, 'category', category);
+    }
   }
 
   // ── export ─────────────────────────────────────────────────────────────────
@@ -559,12 +692,15 @@ export default function App() {
 
           {/* ── filters ── */}
           <div className="filters-bar">
-            <input
-              className="search-input"
-              placeholder="Search customer, supplier, invoice#…"
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-            />
+            <div className="search-wrap">
+              <Search size={14} className="search-icon" />
+              <input
+                className="search-input"
+                placeholder="Search customer, supplier, invoice#…"
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+              />
+            </div>
             <div className="filter-group">
               <span className="filter-label">Month</span>
               <select
@@ -694,8 +830,9 @@ export default function App() {
               <thead>
                 <tr>
                   <th>Product</th>
-                  <th className="num-col">Default Cost/Unit</th>
-                  <th className="num-col">Default Sale Price/Unit</th>
+                  <th className="category-col">Category</th>
+                  <th className="num-col">Default Cost/Unit (AED)</th>
+                  <th className="num-col">Default Sale Price/Unit (AED)</th>
                   <th className="num-col">Default Margin</th>
                 </tr>
               </thead>
@@ -707,6 +844,15 @@ export default function App() {
                   return (
                     <tr key={p}>
                       <td className="customer-cell">{p}</td>
+                      <td className="category-col">
+                        <SearchableSelect
+                          value={itemDefaults?.[p]?.category || DEFAULT_CATEGORY}
+                          onChange={v => setItemCategory(p, v)}
+                          onCreate={addCategory}
+                          options={categories}
+                          placeholder="Category…"
+                        />
+                      </td>
                       <td className="num-col">
                         <input
                           type="number" min="0" step="0.01" placeholder="0.00"
@@ -764,7 +910,7 @@ export default function App() {
         </div>
       )}
 
-      {activeTab === 'reports' && <Reports rows={rows} products={products} itemDefaults={itemDefaults} />}
+      {activeTab === 'reports' && <Reports rows={rows} products={products} itemDefaults={itemDefaults} categories={categories} />}
 
       {/* ── Add/Edit Transaction Modal ── */}
       {showAddRow && (
@@ -796,17 +942,23 @@ export default function App() {
 
             {form.type === 'out' ? (
               <label className="span2">Customer
-                <select value={form.customer} onChange={e => setForm(f => ({ ...f, customer: e.target.value }))}>
-                  <option value="">— select or type —</option>
-                  {customers.map(c => <option key={c} value={c}>{c}</option>)}
-                </select>
+                <SearchableSelect
+                  value={form.customer}
+                  onChange={v => setForm(f => ({ ...f, customer: v }))}
+                  onCreate={addCustomer}
+                  options={customers}
+                  placeholder="Search or type a customer name…"
+                />
               </label>
             ) : (
               <label className="span2">Supplier
-                <select value={form.supplier} onChange={e => setForm(f => ({ ...f, supplier: e.target.value }))}>
-                  <option value="">— select supplier —</option>
-                  {suppliers.map(s => <option key={s} value={s}>{s}</option>)}
-                </select>
+                <SearchableSelect
+                  value={form.supplier}
+                  onChange={v => setForm(f => ({ ...f, supplier: v }))}
+                  onCreate={addSupplier}
+                  options={suppliers}
+                  placeholder="Search or type a supplier name…"
+                />
               </label>
             )}
 
@@ -818,34 +970,55 @@ export default function App() {
             </label>
 
             <div className="span2 price-table">
-              <div className="price-table-head">
-                <span>Product</span><span>Qty</span><span>{form.type === 'out' ? 'Sale Price/Unit' : 'Cost/Unit'}</span>
-              </div>
-              {products.map(p => (
-                <div key={p} className="price-table-row">
-                  <span className="price-table-label">{p}</span>
+              {products.length > 6 && (
+                <div className="product-filter-input search-wrap">
+                  <Search size={14} className="search-icon" />
                   <input
-                    type="number" min="0" placeholder="0"
-                    value={form.qty[p]}
-                    onChange={e => setForm(f => ({ ...f, qty: { ...f.qty, [p]: e.target.value } }))}
+                    value={productFilter}
+                    onChange={e => setProductFilter(e.target.value)}
+                    placeholder="Search items…"
                   />
-                  {form.type === 'out' ? (
-                    <input
-                      type="number" min="0" step="0.01"
-                      placeholder={itemDefaults?.[p]?.price ? `${itemDefaults[p].price} (default)` : '0.00'}
-                      value={form.price[p]}
-                      onChange={e => setForm(f => ({ ...f, price: { ...f.price, [p]: e.target.value } }))}
-                    />
-                  ) : (
-                    <input
-                      type="number" min="0" step="0.01"
-                      placeholder={itemDefaults?.[p]?.cost ? `${itemDefaults[p].cost} (default)` : '0.00'}
-                      value={form.cost[p]}
-                      onChange={e => setForm(f => ({ ...f, cost: { ...f.cost, [p]: e.target.value } }))}
-                    />
-                  )}
                 </div>
+              )}
+              <div className="price-table-head">
+                <span>Product</span><span>Qty</span>
+                <span>{form.type === 'out' ? 'Sale Price/Unit (AED)' : 'Cost/Unit (AED)'}</span>
+              </div>
+              {groupProductsByCategory(
+                products.filter(p => p.toLowerCase().includes(productFilter.trim().toLowerCase()))
+              ).map(group => (
+                <React.Fragment key={group.category}>
+                  {categories.length > 1 && <div className="price-table-category">{group.category}</div>}
+                  {group.items.map(p => (
+                    <div key={p} className="price-table-row">
+                      <span className="price-table-label">{p}</span>
+                      <input
+                        type="number" min="0" placeholder="0"
+                        value={form.qty[p]}
+                        onChange={e => setForm(f => ({ ...f, qty: { ...f.qty, [p]: e.target.value } }))}
+                      />
+                      {form.type === 'out' ? (
+                        <input
+                          type="number" min="0" step="0.01"
+                          placeholder={itemDefaults?.[p]?.price ? `${itemDefaults[p].price} (default)` : '0.00'}
+                          value={form.price[p]}
+                          onChange={e => setForm(f => ({ ...f, price: { ...f.price, [p]: e.target.value } }))}
+                        />
+                      ) : (
+                        <input
+                          type="number" min="0" step="0.01"
+                          placeholder={itemDefaults?.[p]?.cost ? `${itemDefaults[p].cost} (default)` : '0.00'}
+                          value={form.cost[p]}
+                          onChange={e => setForm(f => ({ ...f, cost: { ...f.cost, [p]: e.target.value } }))}
+                        />
+                      )}
+                    </div>
+                  ))}
+                </React.Fragment>
               ))}
+              {products.filter(p => p.toLowerCase().includes(productFilter.trim().toLowerCase())).length === 0 && (
+                <div className="price-table-empty">No items match "{productFilter}".</div>
+              )}
             </div>
 
             <label className="span2">Status
