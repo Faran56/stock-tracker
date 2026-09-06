@@ -18,7 +18,7 @@ const pct = (n) => `${Number(n || 0).toFixed(1)}%`;
 const DEFAULT_CATEGORY = 'General';
 const today = () => new Date().toISOString().slice(0, 10);
 
-const COLORS = ['#4f7dff', '#22c55e', '#f59e0b', '#ef4444', '#a855f7', '#06b6d4', '#ec4899', '#84cc16'];
+const COLORS = ['#0d9488', '#16a34a', '#d97706', '#e11d48', '#7c3aed', '#0891b2', '#db2777', '#65a30d'];
 const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 
 function monthLabel(m) {
@@ -165,9 +165,9 @@ function generateInsights({ totals, byCustomer, byProduct, saleRows, prevTotals,
 }
 
 const INSIGHT_META = {
-  positive: { color: '#22c55e', bg: 'rgba(34,197,94,0.1)', Icon: CheckCircle2 },
-  warning:  { color: '#ef4444', bg: 'rgba(239,68,68,0.1)', Icon: AlertTriangle },
-  info:     { color: '#4f7dff', bg: 'rgba(79,125,255,0.1)', Icon: Info },
+  positive: { color: '#16a34a', bg: 'rgba(22,163,74,0.1)', Icon: CheckCircle2 },
+  warning:  { color: '#e11d48', bg: 'rgba(225,29,72,0.1)', Icon: AlertTriangle },
+  info:     { color: '#0d9488', bg: 'rgba(13,148,136,0.1)', Icon: Info },
 };
 
 export default function Reports({ rows, products, itemDefaults, categories }) {
@@ -272,7 +272,7 @@ export default function Reports({ rows, products, itemDefaults, categories }) {
 
   async function captureChart(ref) {
     if (!ref.current) return null;
-    const canvas = await html2canvas(ref.current, { backgroundColor: '#1a1d27', scale: 2 });
+    const canvas = await html2canvas(ref.current, { backgroundColor: '#ffffff', scale: 2 });
     return canvas;
   }
 
@@ -544,11 +544,11 @@ export default function Reports({ rows, products, itemDefaults, categories }) {
           ) : (
             <ResponsiveContainer width="100%" height={280}>
               <BarChart data={byCustomer.slice(0, 8)} layout="vertical" margin={{ left: 10 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#2e3250" horizontal={false} />
-                <XAxis type="number" stroke="#6b7280" fontSize={11} />
-                <YAxis type="category" dataKey="name" stroke="#9ca3af" fontSize={11} width={110} />
+                <CartesianGrid strokeDasharray="3 3" stroke="#e3e5ea" horizontal={false} />
+                <XAxis type="number" stroke="#9aa1ac" fontSize={11} />
+                <YAxis type="category" dataKey="name" stroke="#667085" fontSize={11} width={110} />
                 <Tooltip
-                  contentStyle={{ background: '#1a1d27', border: '1px solid #2e3250', borderRadius: 8, fontSize: 12 }}
+                  contentStyle={{ background: '#ffffff', border: '1px solid #e3e5ea', borderRadius: 8, fontSize: 12, color: '#111827' }}
                   formatter={(v) => money(v)}
                 />
                 <Bar dataKey="profit" radius={[0, 4, 4, 0]}>
@@ -579,7 +579,7 @@ export default function Reports({ rows, products, itemDefaults, categories }) {
                   {byProduct.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
                 </Pie>
                 <Tooltip
-                  contentStyle={{ background: '#1a1d27', border: '1px solid #2e3250', borderRadius: 8, fontSize: 12 }}
+                  contentStyle={{ background: '#ffffff', border: '1px solid #e3e5ea', borderRadius: 8, fontSize: 12, color: '#111827' }}
                   formatter={(v) => money(v)}
                 />
                 <Legend wrapperStyle={{ fontSize: 11 }} />
@@ -596,15 +596,15 @@ export default function Reports({ rows, products, itemDefaults, categories }) {
         ) : (
           <ResponsiveContainer width="100%" height={220}>
             <LineChart data={monthlyTrend} margin={{ left: 4, right: 12 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#2e3250" />
-              <XAxis dataKey="label" stroke="#9ca3af" fontSize={11} />
-              <YAxis stroke="#6b7280" fontSize={11} />
+              <CartesianGrid strokeDasharray="3 3" stroke="#e3e5ea" />
+              <XAxis dataKey="label" stroke="#667085" fontSize={11} />
+              <YAxis stroke="#9aa1ac" fontSize={11} />
               <Tooltip
-                contentStyle={{ background: '#1a1d27', border: '1px solid #2e3250', borderRadius: 8, fontSize: 12 }}
+                contentStyle={{ background: '#ffffff', border: '1px solid #e3e5ea', borderRadius: 8, fontSize: 12, color: '#111827' }}
                 formatter={(v) => money(v)}
               />
-              <Line type="monotone" dataKey="profit" stroke="#22c55e" strokeWidth={2.5} dot={{ r: 3 }} name="Profit" />
-              <Line type="monotone" dataKey="revenue" stroke="#4f7dff" strokeWidth={1.5} dot={{ r: 2 }} strokeDasharray="4 3" name="Revenue" />
+              <Line type="monotone" dataKey="profit" stroke="#16a34a" strokeWidth={2.5} dot={{ r: 3 }} name="Profit" />
+              <Line type="monotone" dataKey="revenue" stroke="#0d9488" strokeWidth={1.5} dot={{ r: 2 }} strokeDasharray="4 3" name="Revenue" />
             </LineChart>
           </ResponsiveContainer>
         )}
