@@ -13,7 +13,9 @@ import {
 } from 'lucide-react';
 
 const fmt = (n) => Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 2 });
+const money = (n) => `AED ${fmt(n)}`;
 const pct = (n) => `${Number(n || 0).toFixed(1)}%`;
+const DEFAULT_CATEGORY = 'General';
 const today = () => new Date().toISOString().slice(0, 10);
 
 const COLORS = ['#4f7dff', '#22c55e', '#f59e0b', '#ef4444', '#a855f7', '#06b6d4', '#ec4899', '#84cc16'];
@@ -48,6 +50,7 @@ function rowProfit(r, products, itemDefaults) {
 function aggregate(saleRows, products, itemDefaults) {
   const byCustomer = {};
   const byProduct = {};
+  const byCategory = {};
   products.forEach(p => (byProduct[p] = { name: p, revenue: 0, cost: 0, profit: 0, qty: 0 }));
 
   saleRows.forEach(r => {
@@ -69,18 +72,26 @@ function aggregate(saleRows, products, itemDefaults) {
       byProduct[p].cost += qty * unitCost;
       byProduct[p].profit += qty * (price - unitCost);
       byProduct[p].qty += qty;
+
+      const cat = itemDefaults?.[p]?.category || DEFAULT_CATEGORY;
+      if (!byCategory[cat]) byCategory[cat] = { name: cat, revenue: 0, cost: 0, profit: 0, qty: 0 };
+      byCategory[cat].revenue += qty * price;
+      byCategory[cat].cost += qty * unitCost;
+      byCategory[cat].profit += qty * (price - unitCost);
+      byCategory[cat].qty += qty;
     });
   });
 
   const custList = Object.values(byCustomer).sort((a, b) => b.profit - a.profit);
   const prodList = Object.values(byProduct).sort((a, b) => b.profit - a.profit);
+  const catList = Object.values(byCategory).sort((a, b) => b.profit - a.profit);
   const totals = saleRows.reduce((acc, r) => {
     const { revenue, cost, profit } = rowProfit(r, products, itemDefaults);
     acc.revenue += revenue; acc.cost += cost; acc.profit += profit;
     return acc;
   }, { revenue: 0, cost: 0, profit: 0 });
 
-  return { byCustomer: custList, byProduct: prodList, totals };
+  return { byCustomer: custList, byProduct: prodList, byCategory: catList, totals };
 }
 
 function generateInsights({ totals, byCustomer, byProduct, saleRows, prevTotals, hasPrev }) {
@@ -100,9 +111,9 @@ function generateInsights({ totals, byCustomer, byProduct, saleRows, prevTotals,
   if (hasPrev && prevTotals.profit !== 0) {
     const delta = ((totals.profit - prevTotals.profit) / Math.abs(prevTotals.profit)) * 100;
     if (delta <= -15) {
-      notes.push({ type: 'warning', text: `Profit is down ${pct(Math.abs(delta))} vs last month (${fmt(prevTotals.profit)} to ${fmt(totals.profit)}). Worth checking what changed — fewer orders, lower prices, or higher costs.` });
+      notes.push({ type: 'warning', text: `Profit is down ${pct(Math.abs(delta))} vs last month (${money(prevTotals.profit)} to ${money(totals.profit)}). Worth checking what changed — fewer orders, lower prices, or higher costs.` });
     } else if (delta >= 15) {
-      notes.push({ type: 'positive', text: `Profit is up ${pct(delta)} vs last month (${fmt(prevTotals.profit)} to ${fmt(totals.profit)}). Whatever drove this is worth repeating.` });
+      notes.push({ type: 'positive', text: `Profit is up ${pct(delta)} vs last month (${money(prevTotals.profit)} to ${money(totals.profit)}). Whatever drove this is worth repeating.` });
     }
   }
 
@@ -125,7 +136,7 @@ function generateInsights({ totals, byCustomer, byProduct, saleRows, prevTotals,
   if (soldProducts.length > 0) {
     const best = soldProducts[0];
     if (best.profit > 0) {
-      notes.push({ type: 'positive', text: `${best.name} is your strongest performer this period with ${fmt(best.profit)} profit. Consider stocking up or pushing it harder with customers.` });
+      notes.push({ type: 'positive', text: `${best.name} is your strongest performer this period with ${money(best.profit)} profit. Consider stocking up or pushing it harder with customers.` });
     }
   }
 
@@ -159,7 +170,7 @@ const INSIGHT_META = {
   info:     { color: '#4f7dff', bg: 'rgba(79,125,255,0.1)', Icon: Info },
 };
 
-export default function Reports({ rows, products, itemDefaults }) {
+export default function Reports({ rows, products, itemDefaults, categories }) {
   const [exportNote, setExportNote] = useState(null);
   const [exporting, setExporting] = useState(false);
 
@@ -186,7 +197,7 @@ export default function Reports({ rows, products, itemDefaults }) {
     return allSaleRows.filter(r => (r.date || '').slice(0, 7) === prevKey);
   }, [allSaleRows, selectedMonth]);
 
-  const { byCustomer, byProduct, totals } = useMemo(
+  const { byCustomer, byProduct, byCategory, totals } = useMemo(
     () => aggregate(saleRows, products, itemDefaults),
     [saleRows, products, itemDefaults]
   );
@@ -234,20 +245,25 @@ export default function Reports({ rows, products, itemDefaults }) {
     const wb = XLSX.utils.book_new();
     const custSheet = XLSX.utils.json_to_sheet(byCustomer.map(c => ({
       Customer: c.name, Orders: c.orders, 'Qty Sold': c.qty,
-      Revenue: c.revenue, Cost: c.cost, Profit: c.profit,
+      'Revenue (AED)': c.revenue, 'Cost (AED)': c.cost, 'Profit (AED)': c.profit,
       'Margin %': c.revenue > 0 ? ((c.profit / c.revenue) * 100).toFixed(1) : 0,
     })));
     const prodSheet = XLSX.utils.json_to_sheet(byProduct.map(p => ({
-      Product: p.name, 'Qty Sold': p.qty, Revenue: p.revenue, Cost: p.cost, Profit: p.profit,
+      Product: p.name, 'Qty Sold': p.qty, 'Revenue (AED)': p.revenue, 'Cost (AED)': p.cost, 'Profit (AED)': p.profit,
       'Margin %': p.revenue > 0 ? ((p.profit / p.revenue) * 100).toFixed(1) : 0,
+    })));
+    const catSheet = XLSX.utils.json_to_sheet(byCategory.map(c => ({
+      Category: c.name, 'Qty Sold': c.qty, 'Revenue (AED)': c.revenue, 'Cost (AED)': c.cost, 'Profit (AED)': c.profit,
+      'Margin %': c.revenue > 0 ? ((c.profit / c.revenue) * 100).toFixed(1) : 0,
     })));
     const jobSheet = XLSX.utils.json_to_sheet(jobs.map(j => ({
       Date: j.date, Customer: j.customer, Description: j.description, 'Invoice #': j.invoiceNo || '',
-      Qty: j.qty, Revenue: j.revenue, Cost: j.cost, Profit: j.profit,
+      Qty: j.qty, 'Revenue (AED)': j.revenue, 'Cost (AED)': j.cost, 'Profit (AED)': j.profit,
     })));
     const insightSheet = XLSX.utils.json_to_sheet(insights.map(i => ({ Type: i.type, Note: i.text })));
     XLSX.utils.book_append_sheet(wb, custSheet, 'By Customer');
     XLSX.utils.book_append_sheet(wb, prodSheet, 'By Product');
+    XLSX.utils.book_append_sheet(wb, catSheet, 'By Category');
     XLSX.utils.book_append_sheet(wb, jobSheet, 'By Job');
     XLSX.utils.book_append_sheet(wb, insightSheet, 'AI Notes');
     XLSX.writeFile(wb, `profit_report_${selectedMonth === 'All' ? 'all' : selectedMonth}_${today()}.xlsx`);
@@ -277,9 +293,9 @@ export default function Reports({ rows, products, itemDefaults }) {
       doc.text(`${selectedMonth === 'All' ? 'All time' : monthLabel(selectedMonth)}  -  Generated ${today()}`, margin, 23);
 
       const kpis = [
-        { label: 'Revenue', value: fmt(totals.revenue), color: [79, 125, 255] },
-        { label: 'Cost', value: fmt(totals.cost), color: [239, 68, 68] },
-        { label: 'Profit', value: fmt(totals.profit), color: [34, 197, 94] },
+        { label: 'Revenue', value: money(totals.revenue), color: [79, 125, 255] },
+        { label: 'Cost', value: money(totals.cost), color: [239, 68, 68] },
+        { label: 'Profit', value: money(totals.profit), color: [34, 197, 94] },
         { label: 'Margin', value: pct(margin), color: [245, 158, 11] },
       ];
       const boxW = (pageW - margin * 2 - 3 * 6) / 4;
@@ -305,7 +321,7 @@ export default function Reports({ rows, products, itemDefaults }) {
         doc.setFontSize(9);
         const up = profitDelta >= 0;
         doc.setTextColor(up ? 34 : 200, up ? 150 : 60, up ? 90 : 60);
-        doc.text(`${up ? 'UP' : 'DOWN'} ${pct(Math.abs(profitDelta))} vs previous month (${fmt(prevTotals.profit)})`, margin, y);
+        doc.text(`${up ? 'UP' : 'DOWN'} ${pct(Math.abs(profitDelta))} vs previous month (${money(prevTotals.profit)})`, margin, y);
         y += 8;
       }
 
@@ -356,7 +372,7 @@ export default function Reports({ rows, products, itemDefaults }) {
       autoTable(doc, {
         head: [['Customer', 'Orders', 'Qty', 'Revenue', 'Cost', 'Profit', 'Margin']],
         body: byCustomer.map(c => [
-          c.name, c.orders, fmt(c.qty), fmt(c.revenue), fmt(c.cost), fmt(c.profit),
+          c.name, c.orders, fmt(c.qty), money(c.revenue), money(c.cost), money(c.profit),
           c.revenue > 0 ? pct((c.profit / c.revenue) * 100) : '-',
         ]),
         startY: 24,
@@ -371,12 +387,27 @@ export default function Reports({ rows, products, itemDefaults }) {
         head: [['Product', 'Qty Sold', 'Revenue', 'Cost', 'Profit', 'Margin']],
         body: byProduct.map((p, i) => [
           i < 3 && p.profit > 0 ? `${p.name}  * High Profit` : p.name,
-          fmt(p.qty), fmt(p.revenue), fmt(p.cost), fmt(p.profit),
+          fmt(p.qty), money(p.revenue), money(p.cost), money(p.profit),
           p.revenue > 0 ? pct((p.profit / p.revenue) * 100) : '-',
         ]),
         startY: y2 + 6,
         styles: { fontSize: 8, cellPadding: 3 },
         headStyles: { fillColor: [34, 197, 94] },
+      });
+
+      let yc = doc.lastAutoTable.finalY + 12;
+      if (yc > 250) { doc.addPage(); yc = 16; }
+      doc.setFontSize(13);
+      doc.text('Profit by Category', margin, yc);
+      autoTable(doc, {
+        head: [['Category', 'Qty Sold', 'Revenue', 'Cost', 'Profit', 'Margin']],
+        body: byCategory.map(c => [
+          c.name, fmt(c.qty), money(c.revenue), money(c.cost), money(c.profit),
+          c.revenue > 0 ? pct((c.profit / c.revenue) * 100) : '-',
+        ]),
+        startY: yc + 6,
+        styles: { fontSize: 8, cellPadding: 3 },
+        headStyles: { fillColor: [139, 92, 246] },
       });
 
       let y3 = doc.lastAutoTable.finalY + 12;
@@ -385,7 +416,7 @@ export default function Reports({ rows, products, itemDefaults }) {
       doc.text('Top Jobs', margin, y3);
       autoTable(doc, {
         head: [['Date', 'Customer', 'Description', 'Qty', 'Profit']],
-        body: topJobs.map(j => [j.date, j.customer, j.description || '-', fmt(j.qty), fmt(j.profit)]),
+        body: topJobs.map(j => [j.date, j.customer, j.description || '-', fmt(j.qty), money(j.profit)]),
         startY: y3 + 6,
         styles: { fontSize: 8, cellPadding: 3 },
         headStyles: { fillColor: [34, 197, 94] },
@@ -398,7 +429,7 @@ export default function Reports({ rows, products, itemDefaults }) {
         doc.text('Weak Jobs - Review These', margin, y4);
         autoTable(doc, {
           head: [['Date', 'Customer', 'Description', 'Qty', 'Profit']],
-          body: weakJobs.map(j => [j.date, j.customer, j.description || '-', fmt(j.qty), fmt(j.profit)]),
+          body: weakJobs.map(j => [j.date, j.customer, j.description || '-', fmt(j.qty), money(j.profit)]),
           startY: y4 + 6,
           styles: { fontSize: 8, cellPadding: 3 },
           headStyles: { fillColor: [239, 68, 68] },
@@ -442,21 +473,21 @@ export default function Reports({ rows, products, itemDefaults }) {
           <div className="kpi-icon kpi-icon--accent"><DollarSign size={18} /></div>
           <div>
             <div className="kpi-label">Revenue</div>
-            <div className="kpi-value">{fmt(totals.revenue)}</div>
+            <div className="kpi-value">{money(totals.revenue)}</div>
           </div>
         </div>
         <div className="kpi-card">
           <div className="kpi-icon kpi-icon--red"><TrendingDown size={18} /></div>
           <div>
             <div className="kpi-label">Cost</div>
-            <div className="kpi-value">{fmt(totals.cost)}</div>
+            <div className="kpi-value">{money(totals.cost)}</div>
           </div>
         </div>
         <div className="kpi-card">
           <div className="kpi-icon kpi-icon--green"><TrendingUp size={18} /></div>
           <div>
             <div className="kpi-label">Profit</div>
-            <div className="kpi-value kpi-value--green">{fmt(totals.profit)}</div>
+            <div className="kpi-value kpi-value--green">{money(totals.profit)}</div>
             {profitDelta !== null && (
               <div className={`kpi-delta ${profitDelta >= 0 ? 'up' : 'down'}`}>
                 {profitDelta >= 0 ? <ArrowUp size={11} /> : <ArrowDown size={11} />} {pct(Math.abs(profitDelta))} vs last month
@@ -498,7 +529,7 @@ export default function Reports({ rows, products, itemDefaults }) {
             <div key={p.name} className="highlight-card">
               <div className="highlight-rank"><Crown size={14} /> #{i + 1} High Profit Product</div>
               <div className="highlight-name">{p.name}</div>
-              <div className="highlight-profit">{fmt(p.profit)}</div>
+              <div className="highlight-profit">{money(p.profit)}</div>
               <div className="highlight-sub">{p.revenue > 0 ? pct((p.profit / p.revenue) * 100) : '—'} margin · {fmt(p.qty)} units sold</div>
             </div>
           ))}
@@ -518,7 +549,7 @@ export default function Reports({ rows, products, itemDefaults }) {
                 <YAxis type="category" dataKey="name" stroke="#9ca3af" fontSize={11} width={110} />
                 <Tooltip
                   contentStyle={{ background: '#1a1d27', border: '1px solid #2e3250', borderRadius: 8, fontSize: 12 }}
-                  formatter={(v) => fmt(v)}
+                  formatter={(v) => money(v)}
                 />
                 <Bar dataKey="profit" radius={[0, 4, 4, 0]}>
                   {byCustomer.slice(0, 8).map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
@@ -549,7 +580,7 @@ export default function Reports({ rows, products, itemDefaults }) {
                 </Pie>
                 <Tooltip
                   contentStyle={{ background: '#1a1d27', border: '1px solid #2e3250', borderRadius: 8, fontSize: 12 }}
-                  formatter={(v) => fmt(v)}
+                  formatter={(v) => money(v)}
                 />
                 <Legend wrapperStyle={{ fontSize: 11 }} />
               </PieChart>
@@ -570,7 +601,7 @@ export default function Reports({ rows, products, itemDefaults }) {
               <YAxis stroke="#6b7280" fontSize={11} />
               <Tooltip
                 contentStyle={{ background: '#1a1d27', border: '1px solid #2e3250', borderRadius: 8, fontSize: 12 }}
-                formatter={(v) => fmt(v)}
+                formatter={(v) => money(v)}
               />
               <Line type="monotone" dataKey="profit" stroke="#22c55e" strokeWidth={2.5} dot={{ r: 3 }} name="Profit" />
               <Line type="monotone" dataKey="revenue" stroke="#4f7dff" strokeWidth={1.5} dot={{ r: 2 }} strokeDasharray="4 3" name="Revenue" />
@@ -593,7 +624,7 @@ export default function Reports({ rows, products, itemDefaults }) {
                   <td>{j.customer}<div className="memo-cell">{j.description}</div></td>
                   <td className="mono-cell">{j.date}</td>
                   <td className="num-col">{fmt(j.qty)}</td>
-                  <td className="num-col profit-text">{fmt(j.profit)}</td>
+                  <td className="num-col profit-text">{money(j.profit)}</td>
                 </tr>
               ))}
             </tbody>
@@ -613,7 +644,7 @@ export default function Reports({ rows, products, itemDefaults }) {
                   <td>{j.customer}<div className="memo-cell">{j.description}</div></td>
                   <td className="mono-cell">{j.date}</td>
                   <td className="num-col">{fmt(j.qty)}</td>
-                  <td className={`num-col ${j.profit < 0 ? 'neg-text' : ''}`}>{fmt(j.profit)}</td>
+                  <td className={`num-col ${j.profit < 0 ? 'neg-text' : ''}`}>{money(j.profit)}</td>
                 </tr>
               ))}
             </tbody>
@@ -634,9 +665,9 @@ export default function Reports({ rows, products, itemDefaults }) {
                 <tr key={c.name}>
                   <td>{c.name}</td>
                   <td className="num-col">{c.orders}</td>
-                  <td className="num-col">{fmt(c.revenue)}</td>
-                  <td className="num-col">{fmt(c.cost)}</td>
-                  <td className={`num-col ${c.profit < 0 ? 'neg-text' : 'profit-text'}`}>{fmt(c.profit)}</td>
+                  <td className="num-col">{money(c.revenue)}</td>
+                  <td className="num-col">{money(c.cost)}</td>
+                  <td className={`num-col ${c.profit < 0 ? 'neg-text' : 'profit-text'}`}>{money(c.profit)}</td>
                   <td className="num-col">{c.revenue > 0 ? pct((c.profit / c.revenue) * 100) : '—'}</td>
                 </tr>
               ))}
@@ -655,9 +686,9 @@ export default function Reports({ rows, products, itemDefaults }) {
                 <tr key={p.name}>
                   <td>{p.name}{i < 3 && p.profit > 0 && <span className="crown-badge"><Crown size={11} /> High</span>}</td>
                   <td className="num-col">{fmt(p.qty)}</td>
-                  <td className="num-col">{fmt(p.revenue)}</td>
-                  <td className="num-col">{fmt(p.cost)}</td>
-                  <td className={`num-col ${p.profit < 0 ? 'neg-text' : 'profit-text'}`}>{fmt(p.profit)}</td>
+                  <td className="num-col">{money(p.revenue)}</td>
+                  <td className="num-col">{money(p.cost)}</td>
+                  <td className={`num-col ${p.profit < 0 ? 'neg-text' : 'profit-text'}`}>{money(p.profit)}</td>
                   <td className="num-col">{p.revenue > 0 ? pct((p.profit / p.revenue) * 100) : '—'}</td>
                 </tr>
               ))}
@@ -665,6 +696,32 @@ export default function Reports({ rows, products, itemDefaults }) {
           </table>
         </div>
       </div>
+
+      {byCategory.length > 1 && (
+        <div className="tables-grid">
+          <div className="report-table-card" style={{ gridColumn: '1 / -1' }}>
+            <h3>Category Breakdown</h3>
+            <table className="report-table">
+              <thead>
+                <tr><th>Category</th><th className="num-col">Qty Sold</th><th className="num-col">Revenue</th><th className="num-col">Cost</th><th className="num-col">Profit</th><th className="num-col">Margin</th></tr>
+              </thead>
+              <tbody>
+                {byCategory.length === 0 && <tr><td colSpan={6} className="empty-state">No data yet</td></tr>}
+                {byCategory.map(c => (
+                  <tr key={c.name}>
+                    <td><span className="category-badge">{c.name}</span></td>
+                    <td className="num-col">{fmt(c.qty)}</td>
+                    <td className="num-col">{money(c.revenue)}</td>
+                    <td className="num-col">{money(c.cost)}</td>
+                    <td className={`num-col ${c.profit < 0 ? 'neg-text' : 'profit-text'}`}>{money(c.profit)}</td>
+                    <td className="num-col">{c.revenue > 0 ? pct((c.profit / c.revenue) * 100) : '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {exportNote && <div className="toast">{exportNote}</div>}
     </div>
