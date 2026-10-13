@@ -1,22 +1,25 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import * as XLSX from 'xlsx';
 import Papa from 'papaparse';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import {
-  Plus, Upload, Trash2, Package, Users, TrendingDown,
-  X, CheckCircle, Clock, Truck, AlertCircle, Search,
-  Download, RefreshCw, Edit2, ArrowUp, ArrowDown, ArrowUpDown,
-  FileText, Truck as TruckIcon, BarChart3, ListChecks, Tag,
+  Plus, Upload, Trash2, Package, Users, X, CheckCircle, Clock, Truck, AlertCircle,
+  Search, Download, RefreshCw, Edit2, ArrowUp, ArrowDown, ArrowUpDown, FileText,
+  Truck as TruckIcon, BarChart3, ListChecks, Tag, SlidersHorizontal, ChevronDown,
 } from 'lucide-react';
 import Reports from './Reports';
+import Items from './Items';
+import Customers from './Customers';
+import { Modal, SearchableSelect } from './ui';
+import {
+  DEFAULT_CATEGORY, fmt, localToday, computeStock, buildItemInfo,
+} from './utils';
 import './App.css';
 
 // ─── helpers ────────────────────────────────────────────────────────────────
-const today = () => new Date().toISOString().slice(0, 10);
-const fmt = (n) => (n == null || n === '' ? '—' : Number(n).toLocaleString());
+const today = localToday;
 const uid = () => Math.random().toString(36).slice(2, 9);
-const DEFAULT_CATEGORY = 'General';
 
 const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 function monthLabel(m) {
@@ -43,6 +46,8 @@ function statusMetaFor(type) {
   return type === 'in' ? IN_STATUS_META : STATUS_META;
 }
 
+const ALL_STATUSES = [...new Set([...Object.keys(STATUS_META), ...Object.keys(IN_STATUS_META)])];
+
 const INITIAL_PRODUCTS = ['211G', 'Bwm 303', 'Bwm 777'];
 
 const SEED_ROWS = [
@@ -68,15 +73,25 @@ function loadState() {
     const s = localStorage.getItem('stock_v3');
     if (s) {
       const parsed = JSON.parse(s);
-      if (!parsed.itemDefaults) parsed.itemDefaults = defaultItemDefaults(parsed.products || INITIAL_PRODUCTS);
-      // migrate: ensure every product has a category, and a categories list exists
+      parsed.products = parsed.products || INITIAL_PRODUCTS;
+      if (!parsed.itemDefaults) parsed.itemDefaults = defaultItemDefaults(parsed.products);
       const cats = new Set(parsed.categories || [DEFAULT_CATEGORY]);
-      (parsed.products || []).forEach(p => {
+      parsed.products.forEach(p => {
         if (!parsed.itemDefaults[p]) parsed.itemDefaults[p] = { cost: '', price: '', category: DEFAULT_CATEGORY };
         if (!parsed.itemDefaults[p].category) parsed.itemDefaults[p].category = DEFAULT_CATEGORY;
         cats.add(parsed.itemDefaults[p].category);
       });
       parsed.categories = [...cats];
+      // One-time clean-up: the old category box created a new category on every
+      // keystroke ("F", "Fi", "Fil"…). Drop categories that no item uses.
+      if (!parsed.catsCleaned) {
+        const used = new Set(parsed.products.map(p => parsed.itemDefaults[p].category));
+        parsed.categories = parsed.categories.filter(c => c === DEFAULT_CATEGORY || used.has(c));
+        parsed.catsCleaned = true;
+      }
+      if (!parsed.categories.includes(DEFAULT_CATEGORY)) parsed.categories.unshift(DEFAULT_CATEGORY);
+      parsed.customers = parsed.customers || [];
+      parsed.suppliers = parsed.suppliers || [];
       return parsed;
     }
     // migrate from v2 if present
@@ -89,90 +104,62 @@ function loadState() {
       return {
         ...parsed, rows, suppliers: [],
         itemDefaults: defaultItemDefaults(parsed.products || INITIAL_PRODUCTS),
-        categories: [DEFAULT_CATEGORY],
+        categories: [DEFAULT_CATEGORY], catsCleaned: true,
       };
     }
   } catch {}
   return {
     products: INITIAL_PRODUCTS, rows: SEED_ROWS, customers: [], suppliers: [],
-    itemDefaults: defaultItemDefaults(INITIAL_PRODUCTS), categories: [DEFAULT_CATEGORY],
+    itemDefaults: defaultItemDefaults(INITIAL_PRODUCTS), categories: [DEFAULT_CATEGORY], catsCleaned: true,
   };
 }
 function saveState(state) {
   localStorage.setItem('stock_v3', JSON.stringify(state));
 }
 
-// ─── Modal ───────────────────────────────────────────────────────────────────
-// Note: clicking the dimmed backdrop intentionally does NOT close the modal —
-// this avoids accidentally losing an in-progress transaction. Use the X button
-// or a Cancel button in the footer to close.
-function Modal({ title, onClose, children, wide }) {
+// ─── small components ────────────────────────────────────────────────────────
+function ItemChips({ row, products, expanded, onToggle }) {
+  const list = products.filter(p => Number(row.qty?.[p]) > 0);
+  if (list.length === 0) return <span className="text-muted">—</span>;
+  const LIMIT = 4;
+  const shown = expanded ? list : list.slice(0, LIMIT);
+  const sign = row.type === 'out' ? '−' : '+';
   return (
-    <div className="modal-backdrop">
-      <div className={`modal-box ${wide ? 'modal-box--wide' : ''}`}>
-        <div className="modal-header">
-          <span>{title}</span>
-          <button className="icon-btn" onClick={onClose}><X size={18} /></button>
-        </div>
-        <div className="modal-body">{children}</div>
-      </div>
+    <div className="chip-row">
+      {shown.map(p => (
+        <span key={p} className={`item-chip ${row.type === 'out' ? 'item-chip--out' : 'item-chip--in'}`}>
+          {p} <b>{sign}{row.qty[p]}</b>
+        </span>
+      ))}
+      {list.length > LIMIT && (
+        <button className="item-chip item-chip--more" onClick={onToggle}>
+          {expanded ? 'less' : `+${list.length - LIMIT} more`}
+        </button>
+      )}
     </div>
   );
 }
 
-// ─── SearchableSelect ──────────────────────────────────────────────────────
-// A type-to-filter combobox used for Customer, Supplier and Category fields.
-// Typing text that doesn't match an existing option offers to add it as new
-// (when allowCreate is true), so lists grow naturally as data is entered.
-function SearchableSelect({ value, onChange, onCreate, options, placeholder, allowCreate = true }) {
-  const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState(value || '');
-  const wrapRef = useRef(null);
-
-  useEffect(() => { setQuery(value || ''); }, [value]);
-
-  useEffect(() => {
-    function onDocClick(e) {
-      if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false);
-    }
-    document.addEventListener('mousedown', onDocClick);
-    return () => document.removeEventListener('mousedown', onDocClick);
-  }, []);
-
-  const q = query.toLowerCase().trim();
-  const filtered = q ? options.filter(o => o.toLowerCase().includes(q)) : options;
-  const exactMatch = options.some(o => o.toLowerCase() === q);
-
-  function choose(opt) {
-    setQuery(opt);
-    onChange(opt);
-    setOpen(false);
+function CategoryRow({ name, count, locked, onRename, onDelete }) {
+  const [draft, setDraft] = useState(name);
+  useEffect(() => { setDraft(name); }, [name]);
+  function commit() {
+    if (draft.trim() && draft.trim() !== name) onRename(name, draft);
+    else setDraft(name);
   }
-
   return (
-    <div className="searchable-select" ref={wrapRef}>
+    <div className="cat-row">
       <input
-        value={query}
-        placeholder={placeholder}
-        onFocus={() => setOpen(true)}
-        onChange={e => { setQuery(e.target.value); onChange(e.target.value); setOpen(true); }}
+        value={draft}
+        disabled={locked}
+        onChange={e => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={e => e.key === 'Enter' && e.target.blur()}
       />
-      {open && (
-        <div className="searchable-dropdown">
-          {filtered.slice(0, 50).map(opt => (
-            <div key={opt} className="searchable-option" onMouseDown={() => choose(opt)}>{opt}</div>
-          ))}
-          {filtered.length === 0 && !allowCreate && <div className="searchable-empty">No matches</div>}
-          {allowCreate && query.trim() && !exactMatch && (
-            <div
-              className="searchable-option searchable-create"
-              onMouseDown={() => { onCreate && onCreate(query.trim()); choose(query.trim()); }}
-            >
-              <Plus size={12} style={{ verticalAlign: -1, marginRight: 4 }} /> Add "{query.trim()}"
-            </div>
-          )}
-        </div>
-      )}
+      <span className="cat-count">{count} {count === 1 ? 'item' : 'items'}</span>
+      {locked
+        ? <span className="cat-lock">default</span>
+        : <button className="icon-btn danger" onClick={() => onDelete(name)} aria-label={`Delete ${name}`}><Trash2 size={15} /></button>}
     </div>
   );
 }
@@ -182,15 +169,21 @@ export default function App() {
   const [state, setState] = useState(loadState);
   const { products, rows, customers, suppliers, itemDefaults, categories } = state;
 
-  const [activeTab, setActiveTab] = useState('tracker'); // tracker | items | suppliers | reports
+  const [activeTab, setActiveTab] = useState('tracker'); // tracker | items | customers | suppliers | reports
 
   const [showAddRow, setShowAddRow]   = useState(false);
   const [showAddProd, setShowAddProd] = useState(false);
   const [showUpload, setShowUpload]   = useState(false);
   const [showSupplierUpload, setShowSupplierUpload] = useState(false);
+  const [showCats, setShowCats] = useState(false);
+  const [catPrompt, setCatPrompt] = useState(null); // { product } while naming a new category
+  const [catPromptName, setCatPromptName] = useState('');
+  const [exportOpen, setExportOpen] = useState(false);
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [editingId, setEditingId]     = useState(null);
   const [filterStatus, setFilterStatus] = useState('All');
   const [filterProduct, setFilterProduct] = useState('All');
+  const [filterType, setFilterType] = useState('All');
   const [search, setSearch] = useState('');
   const [toast, setToast] = useState(null);
   const [sortBy, setSortBy] = useState('date');
@@ -198,10 +191,13 @@ export default function App() {
   const [newSupplier, setNewSupplier] = useState('');
   const [selectedMonth, setSelectedMonth] = useState('All');
   const [productFilter, setProductFilter] = useState('');
+  const [expandedRows, setExpandedRows] = useState({});
+  const [itemsPreset, setItemsPreset] = useState({ stock: 'All', n: 0 });
 
   // form state
   const [form, setForm] = useState(() => buildEmptyForm(INITIAL_PRODUCTS));
   const [newProd, setNewProd] = useState('');
+  const [newProdCat, setNewProdCat] = useState(DEFAULT_CATEGORY);
 
   useEffect(() => { saveState(state); }, [state]);
 
@@ -233,19 +229,13 @@ export default function App() {
     setTimeout(() => setToast(null), 3000);
   }
 
-  // ── computed balances ──────────────────────────────────────────────────────
-  function computeBalance() {
-    const b = {};
-    products.forEach(p => (b[p] = 0));
-    rows.forEach(r => {
-      products.forEach(p => {
-        const v = Number(r.qty?.[p] || 0);
-        b[p] += r.type === 'in' ? v : -v;
-      });
-    });
-    return b;
-  }
-  const totals = computeBalance();
+  // ── stock, items ───────────────────────────────────────────────────────────
+  const stock = useMemo(() => computeStock(rows, products), [rows, products]);
+  const itemInfo = useMemo(() => buildItemInfo(products, itemDefaults, stock), [products, itemDefaults, stock]);
+  const visibleProducts = useMemo(() => products.filter(p => !itemDefaults?.[p]?.hidden), [products, itemDefaults]);
+  const alertItems = itemInfo.filter(i => !i.hidden && i.alert);
+  const unitsInStock = itemInfo.filter(i => !i.hidden).reduce((s, i) => s + Math.max(i.bal, 0), 0);
+  const pendingCount = rows.filter(r => r.status === 'Pending').length;
 
   // ── months ─────────────────────────────────────────────────────────────────
   const availableMonths = [...new Set(rows.map(r => (r.date || '').slice(0, 7)).filter(Boolean))]
@@ -255,6 +245,7 @@ export default function App() {
   const filtered = rows.filter(r => {
     if (selectedMonth !== 'All' && (r.date || '').slice(0, 7) !== selectedMonth) return false;
     if (filterStatus !== 'All' && r.status !== filterStatus) return false;
+    if (filterType !== 'All' && r.type !== filterType) return false;
     if (filterProduct !== 'All' && !Number(r.qty?.[filterProduct])) return false;
     if (search) {
       const q = search.toLowerCase();
@@ -264,6 +255,11 @@ export default function App() {
     }
     return true;
   });
+  const activeFilterCount = [selectedMonth, filterStatus, filterType, filterProduct].filter(v => v !== 'All').length;
+
+  function clearFilters() {
+    setSelectedMonth('All'); setFilterStatus('All'); setFilterType('All'); setFilterProduct('All'); setSearch('');
+  }
 
   // ── sorting ────────────────────────────────────────────────────────────────
   function toggleSort(col) {
@@ -294,6 +290,11 @@ export default function App() {
     if (av > bv) return sortDir === 'asc' ? 1 : -1;
     return 0;
   });
+
+  const shownIn = visible.filter(r => r.type === 'in' && r.status !== 'Cancelled')
+    .reduce((s, r) => s + products.reduce((t, p) => t + Number(r.qty?.[p] || 0), 0), 0);
+  const shownOut = visible.filter(r => r.type === 'out' && r.status !== 'Cancelled')
+    .reduce((s, r) => s + products.reduce((t, p) => t + Number(r.qty?.[p] || 0), 0), 0);
 
   // ── add / edit row ─────────────────────────────────────────────────────────
   function submitRow() {
@@ -353,7 +354,7 @@ export default function App() {
     setShowAddRow(true);
   }
 
-  // ── products grouped by category (for the transaction modal & items page) ──
+  // ── products grouped by category (transaction modal, product filter) ───────
   function groupProductsByCategory(prods) {
     const groups = {};
     prods.forEach(p => {
@@ -361,7 +362,6 @@ export default function App() {
       if (!groups[cat]) groups[cat] = [];
       groups[cat].push(p);
     });
-    // keep category order stable using the master categories list, then any leftovers
     const orderedCats = [...categories.filter(c => groups[c]), ...Object.keys(groups).filter(c => !categories.includes(c))];
     return orderedCats.map(cat => ({ category: cat, items: groups[cat] }));
   }
@@ -377,10 +377,15 @@ export default function App() {
     setState(s => ({ ...s, rows: s.rows.map(r => r.id === id ? { ...r, status } : r) }));
   }
 
-  // ── add product column ─────────────────────────────────────────────────────
+  // ── add product ────────────────────────────────────────────────────────────
   function addProduct() {
     const name = newProd.trim();
-    if (!name || products.includes(name)) return;
+    if (!name) return;
+    if (products.some(p => p.toLowerCase() === name.toLowerCase())) {
+      showToast(`"${name}" already exists`, 'warn');
+      return;
+    }
+    const cat = categories.includes(newProdCat) ? newProdCat : DEFAULT_CATEGORY;
     setState(s => ({
       ...s,
       products: [...s.products, name],
@@ -390,14 +395,15 @@ export default function App() {
         price: { ...r.price, [name]: 0 },
         cost: { ...r.cost, [name]: 0 },
       })),
-      itemDefaults: { ...s.itemDefaults, [name]: { cost: '', price: '', category: DEFAULT_CATEGORY } },
+      itemDefaults: { ...s.itemDefaults, [name]: { cost: '', price: '', category: cat } },
     }));
     setNewProd('');
+    setNewProdCat(DEFAULT_CATEGORY);
     setShowAddProd(false);
-    showToast(`Product "${name}" added`);
+    showToast(`"${name}" added`);
   }
 
-  // ── item defaults (cost/price) ──────────────────────────────────────────────
+  // ── item defaults (cost / price / reorder level / hidden) ──────────────────
   function updateItemDefault(product, field, value) {
     setState(s => ({
       ...s,
@@ -408,7 +414,13 @@ export default function App() {
     }));
   }
 
-  // ── customer file upload ───────────────────────────────────────────────────
+  function toggleHidden(product) {
+    const nowHidden = !itemDefaults?.[product]?.hidden;
+    updateItemDefault(product, 'hidden', nowHidden);
+    showToast(nowHidden ? `"${product}" hidden` : `"${product}" is visible again`);
+  }
+
+  // ── customer / supplier files ──────────────────────────────────────────────
   function parseNamesFromFile(file, onDone) {
     const ext = file.name.split('.').pop().toLowerCase();
     if (ext === 'csv') {
@@ -468,33 +480,77 @@ export default function App() {
     setState(s => ({ ...s, suppliers: s.suppliers.filter(x => x !== name) }));
   }
 
-  // ── customer creation (from the searchable customer field) ────────────────
   function addCustomer(name) {
     if (!name || customers.includes(name)) return;
     setState(s => ({ ...s, customers: [...s.customers, name] }));
     showToast(`Customer "${name}" added`);
   }
 
-  // ── category creation / assignment ─────────────────────────────────────────
-  function addCategory(name) {
-    if (!name || categories.includes(name)) return;
-    setState(s => ({ ...s, categories: [...s.categories, name] }));
-    showToast(`Category "${name}" added`);
+  function removeCustomer(name) {
+    setState(s => ({ ...s, customers: s.customers.filter(x => x !== name) }));
   }
 
+  // ── categories ─────────────────────────────────────────────────────────────
+  const catExists = (name, except) =>
+    categories.some(c => c !== except && c.toLowerCase() === name.toLowerCase());
+
   function setItemCategory(product, category) {
-    if (!categories.includes(category)) {
-      setState(s => ({
-        ...s,
-        categories: [...s.categories, category],
-        itemDefaults: { ...s.itemDefaults, [product]: { ...s.itemDefaults?.[product], category } },
-      }));
-    } else {
-      updateItemDefault(product, 'category', category);
-    }
+    updateItemDefault(product, 'category', category);
+  }
+
+  function createCategoryFor(product, rawName) {
+    const name = rawName.trim();
+    if (!name) return;
+    const existing = categories.find(c => c.toLowerCase() === name.toLowerCase());
+    setState(s => ({
+      ...s,
+      categories: existing ? s.categories : [...s.categories, name],
+      itemDefaults: product
+        ? { ...s.itemDefaults, [product]: { ...s.itemDefaults?.[product], category: existing || name } }
+        : s.itemDefaults,
+    }));
+    showToast(existing ? `Moved to "${existing}"` : `Category "${name}" created`);
+  }
+
+  function renameCategory(oldName, rawNew) {
+    const n = rawNew.trim();
+    if (!n || n === oldName) return;
+    if (catExists(n, oldName)) { showToast('That category already exists', 'warn'); return; }
+    setState(s => {
+      const nextDefaults = { ...s.itemDefaults };
+      Object.keys(nextDefaults).forEach(p => {
+        if (nextDefaults[p]?.category === oldName) nextDefaults[p] = { ...nextDefaults[p], category: n };
+      });
+      return { ...s, categories: s.categories.map(c => (c === oldName ? n : c)), itemDefaults: nextDefaults };
+    });
+    showToast(`Renamed to "${n}"`);
+  }
+
+  function deleteCategory(name) {
+    if (name === DEFAULT_CATEGORY) return;
+    const inUse = products.filter(p => (itemDefaults?.[p]?.category || DEFAULT_CATEGORY) === name).length;
+    const msg = inUse > 0
+      ? `Delete "${name}"? Its ${inUse} item${inUse === 1 ? '' : 's'} will move to "${DEFAULT_CATEGORY}".`
+      : `Delete "${name}"?`;
+    if (!window.confirm(msg)) return;
+    setState(s => {
+      const nextDefaults = { ...s.itemDefaults };
+      Object.keys(nextDefaults).forEach(p => {
+        if (nextDefaults[p]?.category === name) nextDefaults[p] = { ...nextDefaults[p], category: DEFAULT_CATEGORY };
+      });
+      return { ...s, categories: s.categories.filter(c => c !== name), itemDefaults: nextDefaults };
+    });
+    showToast(`Category "${name}" deleted`, 'warn');
   }
 
   // ── export ─────────────────────────────────────────────────────────────────
+  function itemsText(r) {
+    return products
+      .filter(p => Number(r.qty?.[p]) > 0)
+      .map(p => `${p} ${r.type === 'out' ? '-' : '+'}${r.qty[p]}`)
+      .join(', ');
+  }
+
   function exportXLSX() {
     const data = rows.map(r => {
       const obj = {
@@ -522,18 +578,14 @@ export default function App() {
     doc.setTextColor(120);
     doc.text(`Generated: ${today()}`, 14, 22);
 
-    const head = [['Date', 'Description', 'Customer/Supplier', 'Invoice#', 'Delivery#', ...products, 'Memo', 'Status']];
+    const head = [['Date', 'Description', 'Customer/Supplier', 'Invoice#', 'Delivery#', 'Items', 'Memo', 'Status']];
     const body = visible.map(r => [
       r.date,
       r.description,
       r.customer || r.supplier || '—',
       r.invoiceNo || '—',
       r.deliveryNo || '—',
-      ...products.map(p => {
-        const v = r.qty?.[p] || 0;
-        if (!v) return '—';
-        return r.type === 'out' ? `-${v}` : `+${v}`;
-      }),
+      itemsText(r) || '—',
       r.memo || '—',
       r.status || '—',
     ]);
@@ -542,30 +594,26 @@ export default function App() {
       head, body,
       startY: 28,
       styles: { fontSize: 7, cellPadding: 2.5 },
-      headStyles: { fillColor: [79, 125, 255] },
+      headStyles: { fillColor: [13, 148, 136] },
       alternateRowStyles: { fillColor: [245, 246, 250] },
-    });
-
-    const finalY = doc.lastAutoTable.finalY || 28;
-    doc.setFontSize(10);
-    doc.setTextColor(0);
-    doc.text('Balance:', 14, finalY + 10);
-    let x = 40;
-    products.forEach(p => {
-      doc.text(`${p}: ${fmt(totals[p])}`, x, finalY + 10);
-      x += 40;
+      columnStyles: { 5: { cellWidth: 40 } },
     });
 
     doc.save(`stock_${today()}.pdf`);
     showToast('Exported to PDF');
   }
 
+  function balanceRows() {
+    return itemInfo.filter(i => !i.hidden || i.bal !== 0);
+  }
+
   function exportBalanceXLSX() {
-    const data = products.map(p => ({
-      Product: p,
-      'Total In': totalIn[p] || 0,
-      'Total Out': totalOut[p] || 0,
-      'Current Balance': totals[p] || 0,
+    const data = balanceRows().map(i => ({
+      Product: i.name,
+      Category: i.category,
+      'Total In': i.tin,
+      'Total Out': i.tout,
+      'Current Balance': i.bal,
     }));
     const ws = XLSX.utils.json_to_sheet(data);
     XLSX.utils.sheet_add_aoa(ws, [[`Balance Stock — Generated ${today()}`]], { origin: -1 });
@@ -583,14 +631,14 @@ export default function App() {
     doc.setTextColor(120);
     doc.text(`Generated: ${today()}`, 14, 22);
 
-    const head = [['Product', 'Total In', 'Total Out', 'Current Balance']];
-    const body = products.map(p => [p, fmt(totalIn[p] || 0), fmt(totalOut[p] || 0), fmt(totals[p] || 0)]);
+    const head = [['Product', 'Category', 'Total In', 'Total Out', 'Current Balance']];
+    const body = balanceRows().map(i => [i.name, i.category, fmt(i.tin), fmt(i.tout), fmt(i.bal)]);
 
     autoTable(doc, {
       head, body,
       startY: 28,
       styles: { fontSize: 9, cellPadding: 4 },
-      headStyles: { fillColor: [79, 125, 255] },
+      headStyles: { fillColor: [13, 148, 136] },
       alternateRowStyles: { fillColor: [245, 246, 250] },
     });
 
@@ -598,16 +646,22 @@ export default function App() {
     showToast('Balance stock exported');
   }
 
-  // ── summary cards ──────────────────────────────────────────────────────────
-  const pendingCount = rows.filter(r => r.status === 'Pending').length;
-  const totalOut = rows.filter(r => r.type === 'out').reduce((acc, r) => {
-    products.forEach(p => (acc[p] = (acc[p] || 0) + (r.qty[p] || 0)));
-    return acc;
-  }, {});
-  const totalIn = rows.filter(r => r.type === 'in').reduce((acc, r) => {
-    products.forEach(p => (acc[p] = (acc[p] || 0) + (r.qty[p] || 0)));
-    return acc;
-  }, {});
+  function runExport(fn) {
+    setExportOpen(false);
+    fn();
+  }
+
+  // ── transaction modal: which products to list ──────────────────────────────
+  const formProducts = products.filter(p => !itemDefaults?.[p]?.hidden || Number(form.qty?.[p]) > 0);
+  const modalProducts = formProducts.filter(p => p.toLowerCase().includes(productFilter.trim().toLowerCase()));
+
+  const TABS = [
+    { id: 'tracker', label: 'Tracker', Icon: ListChecks },
+    { id: 'items', label: 'Items', Icon: Tag },
+    { id: 'customers', label: 'Customers', Icon: Users },
+    { id: 'suppliers', label: 'Suppliers', Icon: TruckIcon, count: suppliers.length },
+    { id: 'reports', label: 'Reports', Icon: BarChart3 },
+  ];
 
   return (
     <div className="app">
@@ -622,272 +676,263 @@ export default function App() {
         </div>
         {activeTab === 'tracker' && (
           <div className="header-actions">
-            <button className="btn btn-ghost" onClick={() => setShowUpload(true)}>
-              <Users size={15} /> Customers
-              {customers.length > 0 && <span className="chip">{customers.length}</span>}
-            </button>
-            <button className="btn btn-ghost" onClick={exportXLSX}>
-              <Download size={15} /> Excel
-            </button>
-            <button className="btn btn-ghost" onClick={exportPDF}>
-              <FileText size={15} /> PDF
-            </button>
-            <div className="split-btn">
-              <button className="btn btn-ghost split-btn-main" onClick={exportBalanceXLSX}>
-                <Package size={15} /> Balance
+            <div className="menu-wrap">
+              <button className="btn btn-ghost" onClick={() => setExportOpen(o => !o)} aria-label="Export">
+                <Download size={15} /> <span className="hide-mobile">Export</span> <ChevronDown size={13} className="hide-mobile" />
               </button>
-              <button className="btn btn-ghost split-btn-side" onClick={exportBalancePDF} title="Download balance as PDF">
-                <FileText size={13} />
-              </button>
+              {exportOpen && (
+                <>
+                  <div className="menu-backdrop" onClick={() => setExportOpen(false)} />
+                  <div className="menu">
+                    <div className="menu-label">Transactions</div>
+                    <button onClick={() => runExport(exportXLSX)}><Download size={14} /> Excel</button>
+                    <button onClick={() => runExport(exportPDF)}><FileText size={14} /> PDF (current filters)</button>
+                    <div className="menu-label">Balance stock</div>
+                    <button onClick={() => runExport(exportBalanceXLSX)}><Package size={14} /> Excel</button>
+                    <button onClick={() => runExport(exportBalancePDF)}><FileText size={14} /> PDF</button>
+                  </div>
+                </>
+              )}
             </div>
-            <button className="btn btn-accent" onClick={openAddRow}>
+            <button className="btn btn-accent hide-mobile" onClick={openAddRow}>
               <Plus size={15} /> Add Transaction
             </button>
           </div>
         )}
       </header>
 
-      {/* ── tab nav ── */}
-      <div className="tab-nav">
-        <button className={`tab-btn ${activeTab === 'tracker' ? 'active' : ''}`} onClick={() => setActiveTab('tracker')}>
-          <ListChecks size={15} /> Tracker
-        </button>
-        <button className={`tab-btn ${activeTab === 'items' ? 'active' : ''}`} onClick={() => setActiveTab('items')}>
-          <Tag size={15} /> Items
-        </button>
-        <button className={`tab-btn ${activeTab === 'suppliers' ? 'active' : ''}`} onClick={() => setActiveTab('suppliers')}>
-          <TruckIcon size={15} /> Suppliers
-          {suppliers.length > 0 && <span className="chip">{suppliers.length}</span>}
-        </button>
-        <button className={`tab-btn ${activeTab === 'reports' ? 'active' : ''}`} onClick={() => setActiveTab('reports')}>
-          <BarChart3 size={15} /> Reports
-        </button>
-      </div>
+      {/* ── tab nav (top on desktop, bottom bar on phones) ── */}
+      <nav className="tab-nav">
+        {TABS.map(({ id, label, Icon, count }) => (
+          <button key={id} className={`tab-btn ${activeTab === id ? 'active' : ''}`} onClick={() => setActiveTab(id)}>
+            <Icon size={16} /> <span>{label}</span>
+            {count > 0 && <span className="chip hide-mobile">{count}</span>}
+          </button>
+        ))}
+      </nav>
 
       {activeTab === 'tracker' && (
-        <>
-          {/* ── summary strip ── */}
-          <div className="summary-strip">
-            {products.map(p => (
-              <div key={p} className="summary-card">
-                <div className="sc-label">{p}</div>
-                <div className={`sc-balance ${totals[p] < 0 ? 'neg' : totals[p] === 0 ? 'zero' : ''}`}>
-                  {fmt(totals[p])}
-                </div>
-                <div className="sc-sub">
-                  <TrendingDown size={11} /> {fmt(totalOut[p] || 0)} sold
-                </div>
-              </div>
-            ))}
-            <div className="summary-card summary-card--stat">
-              <div className="sc-label">Pending Orders</div>
-              <div className="sc-balance amber">{pendingCount}</div>
-              <div className="sc-sub"><Clock size={11} /> awaiting delivery</div>
+        <div className="page tracker-page">
+          {/* ── overview ── */}
+          <div className="stat-grid">
+            <div className="stat-card">
+              <span className="stat-label">Items</span>
+              <b className="stat-value">{visibleProducts.length}</b>
+              <span className="stat-sub">{categories.length > 1 ? `${categories.length} categories` : 'tracked'}</span>
             </div>
-            <button className="add-product-card" onClick={() => setShowAddProd(true)}>
-              <Plus size={18} />
-              <span>Add Product</span>
+            <div className="stat-card">
+              <span className="stat-label">Units in stock</span>
+              <b className="stat-value">{fmt(unitsInStock)}</b>
+              <span className="stat-sub">across visible items</span>
+            </div>
+            <button
+              className={`stat-card stat-card--btn ${pendingCount > 0 ? 'stat-card--warn' : ''}`}
+              onClick={() => { clearFilters(); setFilterStatus('Pending'); }}
+            >
+              <span className="stat-label">Pending</span>
+              <b className="stat-value">{pendingCount}</b>
+              <span className="stat-sub">tap to filter</span>
+            </button>
+            <button
+              className={`stat-card stat-card--btn ${alertItems.length > 0 ? 'stat-card--danger' : ''}`}
+              onClick={() => { setItemsPreset(p => ({ stock: 'alert', n: p.n + 1 })); setActiveTab('items'); }}
+            >
+              <span className="stat-label">Needs attention</span>
+              <b className="stat-value">{alertItems.length}</b>
+              <span className="stat-sub">low or out of stock</span>
             </button>
           </div>
+
+          {alertItems.length > 0 && (
+            <div className="alert-strip">
+              <span className="alert-label"><AlertCircle size={13} /> Stock alerts</span>
+              {alertItems.slice(0, 6).map(i => (
+                <span key={i.name} className={`stock-tag stock-tag--${i.status}`}>
+                  {i.name} · {i.bal <= 0 ? (i.bal < 0 ? `${i.bal}` : 'out') : `${i.bal} left`}
+                </span>
+              ))}
+              {alertItems.length > 6 && (
+                <button className="link-btn" onClick={() => { setItemsPreset(p => ({ stock: 'alert', n: p.n + 1 })); setActiveTab('items'); }}>
+                  +{alertItems.length - 6} more
+                </button>
+              )}
+            </div>
+          )}
 
           {/* ── filters ── */}
           <div className="filters-bar">
-            <div className="search-wrap">
-              <Search size={14} className="search-icon" />
-              <input
-                className="search-input"
-                placeholder="Search customer, supplier, invoice#…"
-                value={search}
-                onChange={e => setSearch(e.target.value)}
-              />
+            <div className="filters-main">
+              <div className="search-wrap grow">
+                <Search size={14} className="search-icon" />
+                <input
+                  className="search-input"
+                  placeholder="Search customer, supplier, invoice#…"
+                  value={search}
+                  onChange={e => setSearch(e.target.value)}
+                />
+              </div>
+              <button className="btn btn-ghost filters-toggle" onClick={() => setFiltersOpen(o => !o)}>
+                <SlidersHorizontal size={15} /> Filters
+                {activeFilterCount > 0 && <span className="chip">{activeFilterCount}</span>}
+              </button>
             </div>
-            <div className="filter-group">
-              <span className="filter-label">Month</span>
-              <select
-                className="month-select"
-                value={selectedMonth}
-                onChange={e => setSelectedMonth(e.target.value)}
-              >
-                <option value="All">All months</option>
-                {availableMonths.map(m => (
-                  <option key={m} value={m}>{monthLabel(m)}</option>
-                ))}
-              </select>
-            </div>
-            <div className="filter-group">
-              <span className="filter-label">Status</span>
-              {['All', ...new Set([...Object.keys(STATUS_META), ...Object.keys(IN_STATUS_META)])].map(s => (
-                <button
-                  key={s}
-                  className={`filter-pill ${filterStatus === s ? 'active' : ''}`}
-                  onClick={() => setFilterStatus(s)}
-                >{s}</button>
-              ))}
-            </div>
-            <div className="filter-group">
-              <span className="filter-label">Product</span>
-              {['All', ...products].map(p => (
-                <button
-                  key={p}
-                  className={`filter-pill ${filterProduct === p ? 'active' : ''}`}
-                  onClick={() => setFilterProduct(p)}
-                >{p}</button>
-              ))}
+            <div className={`filters-extra ${filtersOpen ? 'open' : ''}`}>
+              <label className="filter-field"><span>Month</span>
+                <select value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)}>
+                  <option value="All">All months</option>
+                  {availableMonths.map(m => <option key={m} value={m}>{monthLabel(m)}</option>)}
+                </select>
+              </label>
+              <label className="filter-field"><span>Type</span>
+                <select value={filterType} onChange={e => setFilterType(e.target.value)}>
+                  <option value="All">In &amp; out</option>
+                  <option value="out">Sales (out)</option>
+                  <option value="in">Purchases (in)</option>
+                </select>
+              </label>
+              <label className="filter-field"><span>Status</span>
+                <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
+                  <option value="All">All statuses</option>
+                  {ALL_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </label>
+              <label className="filter-field"><span>Item</span>
+                <select value={filterProduct} onChange={e => setFilterProduct(e.target.value)}>
+                  <option value="All">All items</option>
+                  {categories.length > 1
+                    ? groupProductsByCategory(visibleProducts).map(g => (
+                      <optgroup key={g.category} label={g.category}>
+                        {g.items.map(p => <option key={p} value={p}>{p}</option>)}
+                      </optgroup>
+                    ))
+                    : visibleProducts.map(p => <option key={p} value={p}>{p}</option>)}
+                </select>
+              </label>
+              <label className="filter-field sort-field"><span>Sort</span>
+                <div className="sort-group">
+                  <select value={sortBy} onChange={e => setSortBy(e.target.value)}>
+                    <option value="date">Date</option>
+                    <option value="customer">Customer / Supplier</option>
+                    <option value="description">Description</option>
+                    <option value="status">Status</option>
+                  </select>
+                  <button type="button" className="btn btn-ghost btn-icon" onClick={() => setSortDir(d => (d === 'asc' ? 'desc' : 'asc'))} aria-label="Toggle sort direction">
+                    {sortDir === 'asc' ? <ArrowUp size={15} /> : <ArrowDown size={15} />}
+                  </button>
+                </div>
+              </label>
+              {(activeFilterCount > 0 || search) && (
+                <button className="link-btn clear-btn" onClick={clearFilters}>Clear filters</button>
+              )}
             </div>
           </div>
 
-          {/* ── table ── */}
-          <div className="table-wrap">
-            <table className="stock-table">
-              <thead>
-                <tr>
-                  <th className="sortable" onClick={() => toggleSort('date')}>Date {sortIcon('date')}</th>
-                  <th className="sortable" onClick={() => toggleSort('description')}>Description {sortIcon('description')}</th>
-                  <th className="sortable" onClick={() => toggleSort('customer')}>Customer / Supplier {sortIcon('customer')}</th>
-                  <th>Invoice#</th>
-                  <th>Delivery#</th>
-                  {products.map(p => <th key={p} className="num-col">{p}</th>)}
-                  <th>Memo</th>
-                  <th className="sortable" onClick={() => toggleSort('status')}>Status {sortIcon('status')}</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {visible.length === 0 && (
-                  <tr><td colSpan={products.length + 8} className="empty-state">No records match your filters.</td></tr>
-                )}
-                {visible.map(row => {
-                  const isOut = row.type === 'out';
-                  return (
-                    <tr key={row.id} className={isOut ? 'row-out' : 'row-in'}>
-                      <td className="mono-cell">{row.date}</td>
-                      <td>{row.description}</td>
-                      <td className="customer-cell">{row.customer || row.supplier || <span className="text-muted">—</span>}</td>
-                      <td className="mono-cell">{row.invoiceNo || <span className="text-muted">—</span>}</td>
-                      <td className="mono-cell">{row.deliveryNo || <span className="text-muted">—</span>}</td>
-                      {products.map(p => {
-                        const v = row.qty?.[p] || 0;
-                        return (
-                          <td key={p} className="num-col">
-                            {v !== 0 ? (
-                              <span className={isOut ? 'qty-out' : 'qty-in'}>
-                                {isOut ? '-' : '+'}{v}
-                              </span>
-                            ) : <span className="text-muted">—</span>}
-                          </td>
-                        );
-                      })}
-                      <td className="memo-cell">{row.memo || <span className="text-muted">—</span>}</td>
-                      <td>
-                        <select
-                          className="status-select"
-                          value={row.status || ''}
-                          onChange={e => setStatus(row.id, e.target.value)}
-                          style={{ color: statusMetaFor(row.type)[row.status]?.color || 'var(--text-muted)' }}
-                        >
-                          <option value="">—</option>
-                          {Object.keys(statusMetaFor(row.type)).map(s => <option key={s} value={s}>{s}</option>)}
-                        </select>
-                      </td>
-                      <td>
-                        <div className="row-actions">
-                          <button className="icon-btn" onClick={() => openEditRow(row)}>
-                            <Edit2 size={14} />
-                          </button>
-                          <button className="icon-btn danger" onClick={() => deleteRow(row.id)}>
-                            <Trash2 size={14} />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-              <tfoot>
-                <tr className="totals-row">
-                  <td colSpan={5}>Balance</td>
-                  {products.map(p => (
-                    <td key={p} className={`num-col total-cell ${totals[p] < 0 ? 'neg' : ''}`}>
-                      {fmt(totals[p])}
-                    </td>
-                  ))}
-                  <td colSpan={3}></td>
-                </tr>
-              </tfoot>
-            </table>
-          </div>
-        </>
-      )}
+          {/* ── transactions ── */}
+          <div className="gt tx">
+            <div className="gt-head tx-head">
+              <div className="gt-h sortable" onClick={() => toggleSort('date')}>Date {sortIcon('date')}</div>
+              <div className="gt-h sortable" onClick={() => toggleSort('description')}>Description {sortIcon('description')}</div>
+              <div className="gt-h sortable" onClick={() => toggleSort('customer')}>Customer / Supplier {sortIcon('customer')}</div>
+              <div className="gt-h">Invoice / Delivery</div>
+              <div className="gt-h">Items</div>
+              <div className="gt-h">Memo</div>
+              <div className="gt-h sortable" onClick={() => toggleSort('status')}>Status {sortIcon('status')}</div>
+              <div className="gt-h"></div>
+            </div>
 
-      {activeTab === 'items' && (
-        <div className="items-page">
-          <div className="items-header">
-            <h2>Item Defaults</h2>
-            <p className="items-sub">Set a default cost and sale price per product. These auto-fill new transactions but can be overridden anytime. Reports use these as a fallback whenever a transaction has no cost/price entered.</p>
+            {visible.length === 0 && <div className="empty-state"><p>No records match your filters.</p></div>}
+
+            {visible.map(row => {
+              const isOut = row.type === 'out';
+              const hasRefs = row.invoiceNo || row.deliveryNo;
+              return (
+                <div key={row.id} className={`gt-row tx-row ${isOut ? 'row-out' : 'row-in'}`}>
+                  <div className="tx-date mono-cell">{row.date}</div>
+                  <div className="tx-desc">{row.description}</div>
+                  <div className="tx-party customer-cell">{row.customer || row.supplier || <span className="text-muted">—</span>}</div>
+                  <div className={`tx-refs mono-cell ${hasRefs ? '' : 'is-empty'}`}>
+                    {hasRefs ? (
+                      <>
+                        {row.invoiceNo && <div>INV {row.invoiceNo}</div>}
+                        {row.deliveryNo && <div>DEL {row.deliveryNo}</div>}
+                      </>
+                    ) : <span className="text-muted">—</span>}
+                  </div>
+                  <div className="tx-items">
+                    <ItemChips
+                      row={row}
+                      products={products}
+                      expanded={!!expandedRows[row.id]}
+                      onToggle={() => setExpandedRows(e => ({ ...e, [row.id]: !e[row.id] }))}
+                    />
+                  </div>
+                  <div className={`tx-memo memo-cell ${row.memo ? '' : 'is-empty'}`}>{row.memo || <span className="text-muted">—</span>}</div>
+                  <div className="tx-status">
+                    <select
+                      className="status-select"
+                      value={row.status || ''}
+                      onChange={e => setStatus(row.id, e.target.value)}
+                      style={{ color: statusMetaFor(row.type)[row.status]?.color || 'var(--text-muted)' }}
+                    >
+                      <option value="">—</option>
+                      {Object.keys(statusMetaFor(row.type)).map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  </div>
+                  <div className="tx-actions row-actions">
+                    <button className="icon-btn" onClick={() => openEditRow(row)} aria-label="Edit"><Edit2 size={15} /></button>
+                    <button className="icon-btn danger" onClick={() => deleteRow(row.id)} aria-label="Delete"><Trash2 size={15} /></button>
+                  </div>
+                </div>
+              );
+            })}
           </div>
-          <div className="items-table-wrap">
-            <table className="items-table">
-              <thead>
-                <tr>
-                  <th>Product</th>
-                  <th className="category-col">Category</th>
-                  <th className="num-col">Default Cost/Unit (AED)</th>
-                  <th className="num-col">Default Sale Price/Unit (AED)</th>
-                  <th className="num-col">Default Margin</th>
-                </tr>
-              </thead>
-              <tbody>
-                {products.map(p => {
-                  const cost = Number(itemDefaults?.[p]?.cost) || 0;
-                  const price = Number(itemDefaults?.[p]?.price) || 0;
-                  const marginPct = price > 0 ? ((price - cost) / price) * 100 : 0;
-                  return (
-                    <tr key={p}>
-                      <td className="customer-cell">{p}</td>
-                      <td className="category-col">
-                        <SearchableSelect
-                          value={itemDefaults?.[p]?.category || DEFAULT_CATEGORY}
-                          onChange={v => setItemCategory(p, v)}
-                          onCreate={addCategory}
-                          options={categories}
-                          placeholder="Category…"
-                        />
-                      </td>
-                      <td className="num-col">
-                        <input
-                          type="number" min="0" step="0.01" placeholder="0.00"
-                          value={itemDefaults?.[p]?.cost ?? ''}
-                          onChange={e => updateItemDefault(p, 'cost', e.target.value)}
-                          className="items-input"
-                        />
-                      </td>
-                      <td className="num-col">
-                        <input
-                          type="number" min="0" step="0.01" placeholder="0.00"
-                          value={itemDefaults?.[p]?.price ?? ''}
-                          onChange={e => updateItemDefault(p, 'price', e.target.value)}
-                          className="items-input"
-                        />
-                      </td>
-                      <td className={`num-col ${marginPct < 0 ? 'neg-text' : 'profit-text'}`}>
-                        {price > 0 ? `${marginPct.toFixed(1)}%` : '—'}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+
+          <div className="tx-foot">
+            <span>{visible.length} {visible.length === 1 ? 'transaction' : 'transactions'}</span>
+            <span><b className="qty-in">+{fmt(shownIn)}</b> in · <b className="qty-out">−{fmt(shownOut)}</b> out (units shown)</span>
           </div>
+
+          <button className="fab" onClick={openAddRow} aria-label="Add transaction"><Plus size={24} /></button>
         </div>
       )}
 
+      {activeTab === 'items' && (
+        <Items
+          key={itemsPreset.n}
+          presetStock={itemsPreset.stock}
+          info={itemInfo}
+          categories={categories}
+          onUpdateDefault={updateItemDefault}
+          onSetCategory={setItemCategory}
+          onToggleHidden={toggleHidden}
+          onAddProduct={() => setShowAddProd(true)}
+          onNewCategory={(product) => { setCatPromptName(''); setCatPrompt({ product }); }}
+          onManageCategories={() => { setCatPromptName(''); setShowCats(true); }}
+        />
+      )}
+
+      {activeTab === 'customers' && (
+        <Customers
+          rows={rows}
+          products={products}
+          itemDefaults={itemDefaults}
+          customers={customers}
+          stock={stock}
+          onUpload={() => setShowUpload(true)}
+          onAddCustomer={addCustomer}
+          onRemoveCustomer={removeCustomer}
+        />
+      )}
+
       {activeTab === 'suppliers' && (
-        <div className="suppliers-page">
-          <div className="suppliers-header">
-            <h2>Suppliers</h2>
-            <button className="btn btn-ghost" onClick={() => setShowSupplierUpload(true)}>
-              <Upload size={15} /> Upload List
-            </button>
+        <div className="page suppliers-page">
+          <div className="page-head">
+            <div><h2>Suppliers</h2></div>
+            <div className="page-head-actions">
+              <button className="btn btn-ghost" onClick={() => setShowSupplierUpload(true)}>
+                <Upload size={15} /> Upload List
+              </button>
+            </div>
           </div>
           <div className="supplier-add-row">
             <input
@@ -899,11 +944,11 @@ export default function App() {
             <button className="btn btn-accent" onClick={addSupplierManual}><Plus size={14} /> Add</button>
           </div>
           <div className="supplier-list">
-            {suppliers.length === 0 && <div className="empty-state">No suppliers yet. Add one above or upload a list.</div>}
+            {suppliers.length === 0 && <div className="empty-state"><p>No suppliers yet. Add one above or upload a list.</p></div>}
             {suppliers.map(s => (
               <div key={s} className="supplier-row">
                 <span><TruckIcon size={14} /> {s}</span>
-                <button className="icon-btn danger" onClick={() => removeSupplier(s)}><Trash2 size={14} /></button>
+                <button className="icon-btn danger" onClick={() => removeSupplier(s)} aria-label={`Remove ${s}`}><Trash2 size={15} /></button>
               </div>
             ))}
           </div>
@@ -970,7 +1015,7 @@ export default function App() {
             </label>
 
             <div className="span2 price-table">
-              {products.length > 6 && (
+              {formProducts.length > 6 && (
                 <div className="product-filter-input search-wrap">
                   <Search size={14} className="search-icon" />
                   <input
@@ -981,34 +1026,32 @@ export default function App() {
                 </div>
               )}
               <div className="price-table-head">
-                <span>Product</span><span>Qty</span>
-                <span>{form.type === 'out' ? 'Sale Price/Unit (AED)' : 'Cost/Unit (AED)'}</span>
+                <span>Item</span><span>Qty</span>
+                <span>{form.type === 'out' ? 'Price (AED)' : 'Cost (AED)'}</span>
               </div>
-              {groupProductsByCategory(
-                products.filter(p => p.toLowerCase().includes(productFilter.trim().toLowerCase()))
-              ).map(group => (
+              {groupProductsByCategory(modalProducts).map(group => (
                 <React.Fragment key={group.category}>
                   {categories.length > 1 && <div className="price-table-category">{group.category}</div>}
                   {group.items.map(p => (
                     <div key={p} className="price-table-row">
                       <span className="price-table-label">{p}</span>
                       <input
-                        type="number" min="0" placeholder="0"
-                        value={form.qty[p]}
+                        type="number" min="0" placeholder="0" inputMode="numeric"
+                        value={form.qty[p] ?? ''}
                         onChange={e => setForm(f => ({ ...f, qty: { ...f.qty, [p]: e.target.value } }))}
                       />
                       {form.type === 'out' ? (
                         <input
-                          type="number" min="0" step="0.01"
-                          placeholder={itemDefaults?.[p]?.price ? `${itemDefaults[p].price} (default)` : '0.00'}
-                          value={form.price[p]}
+                          type="number" min="0" step="0.01" inputMode="decimal"
+                          placeholder={itemDefaults?.[p]?.price ? `${itemDefaults[p].price}` : '0.00'}
+                          value={form.price[p] ?? ''}
                           onChange={e => setForm(f => ({ ...f, price: { ...f.price, [p]: e.target.value } }))}
                         />
                       ) : (
                         <input
-                          type="number" min="0" step="0.01"
-                          placeholder={itemDefaults?.[p]?.cost ? `${itemDefaults[p].cost} (default)` : '0.00'}
-                          value={form.cost[p]}
+                          type="number" min="0" step="0.01" inputMode="decimal"
+                          placeholder={itemDefaults?.[p]?.cost ? `${itemDefaults[p].cost}` : '0.00'}
+                          value={form.cost[p] ?? ''}
                           onChange={e => setForm(f => ({ ...f, cost: { ...f.cost, [p]: e.target.value } }))}
                         />
                       )}
@@ -1016,8 +1059,10 @@ export default function App() {
                   ))}
                 </React.Fragment>
               ))}
-              {products.filter(p => p.toLowerCase().includes(productFilter.trim().toLowerCase())).length === 0 && (
-                <div className="price-table-empty">No items match "{productFilter}".</div>
+              {modalProducts.length === 0 && (
+                <div className="price-table-empty">
+                  {productFilter ? `No items match "${productFilter}".` : 'No visible items. Add or unhide items on the Items tab.'}
+                </div>
               )}
             </div>
 
@@ -1043,10 +1088,10 @@ export default function App() {
         </Modal>
       )}
 
-      {/* ── Add Product Modal ── */}
+      {/* ── Add Item Modal ── */}
       {showAddProd && (
-        <Modal title="Add Product Column" onClose={() => setShowAddProd(false)}>
-          <label>Product / SKU name
+        <Modal title="Add Item" onClose={() => setShowAddProd(false)}>
+          <label className="stack-label">Item / SKU name
             <input
               value={newProd}
               onChange={e => setNewProd(e.target.value)}
@@ -1055,9 +1100,81 @@ export default function App() {
               autoFocus
             />
           </label>
+          <label className="stack-label">Category
+            <select value={newProdCat} onChange={e => setNewProdCat(e.target.value)}>
+              {categories.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </label>
           <div className="modal-footer">
             <button className="btn btn-ghost" onClick={() => setShowAddProd(false)}>Cancel</button>
-            <button className="btn btn-accent" onClick={addProduct}><Plus size={14} /> Add Column</button>
+            <button className="btn btn-accent" onClick={addProduct}><Plus size={14} /> Add Item</button>
+          </div>
+        </Modal>
+      )}
+
+      {/* ── New category (from an item's category dropdown) ── */}
+      {catPrompt && (
+        <Modal title="New category" onClose={() => setCatPrompt(null)}>
+          <label className="stack-label">Category name
+            <input
+              value={catPromptName}
+              onChange={e => setCatPromptName(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter' && catPromptName.trim()) { createCategoryFor(catPrompt.product, catPromptName); setCatPrompt(null); }
+              }}
+              placeholder="e.g. Membranes"
+              autoFocus
+            />
+          </label>
+          {catPrompt.product && <p className="modal-hint">"{catPrompt.product}" will be moved into this category.</p>}
+          <div className="modal-footer">
+            <button className="btn btn-ghost" onClick={() => setCatPrompt(null)}>Cancel</button>
+            <button
+              className="btn btn-accent"
+              disabled={!catPromptName.trim()}
+              onClick={() => { createCategoryFor(catPrompt.product, catPromptName); setCatPrompt(null); }}
+            >
+              <Plus size={14} /> Create
+            </button>
+          </div>
+        </Modal>
+      )}
+
+      {/* ── Manage categories ── */}
+      {showCats && (
+        <Modal title="Categories" onClose={() => setShowCats(false)}>
+          <p className="modal-hint">Rename a category by editing it. Deleting a category moves its items to "{DEFAULT_CATEGORY}".</p>
+          <div className="cat-list">
+            {categories.map(c => (
+              <CategoryRow
+                key={c}
+                name={c}
+                locked={c === DEFAULT_CATEGORY}
+                count={products.filter(p => (itemDefaults?.[p]?.category || DEFAULT_CATEGORY) === c).length}
+                onRename={renameCategory}
+                onDelete={deleteCategory}
+              />
+            ))}
+          </div>
+          <div className="cat-add">
+            <input
+              placeholder="New category…"
+              value={catPromptName}
+              onChange={e => setCatPromptName(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter' && catPromptName.trim()) { createCategoryFor(null, catPromptName); setCatPromptName(''); }
+              }}
+            />
+            <button
+              className="btn btn-accent"
+              disabled={!catPromptName.trim()}
+              onClick={() => { createCategoryFor(null, catPromptName); setCatPromptName(''); }}
+            >
+              <Plus size={14} /> Add
+            </button>
+          </div>
+          <div className="modal-footer">
+            <button className="btn btn-accent" onClick={() => setShowCats(false)}>Done</button>
           </div>
         </Modal>
       )}
@@ -1078,7 +1195,7 @@ export default function App() {
                 {customers.length > 20 && <span className="cust-chip muted">+{customers.length - 20} more</span>}
               </div>
               <button className="btn btn-ghost btn-sm" style={{ marginTop: 10 }}
-                onClick={() => setState(s => ({ ...s, customers: [] }))}>
+                onClick={() => { if (window.confirm('Clear the saved customer name list? Your transactions are not affected.')) setState(s => ({ ...s, customers: [] })); }}>
                 Clear list
               </button>
             </div>
