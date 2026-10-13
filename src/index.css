@@ -35,8 +35,12 @@
   --shadow-lg: 0 16px 36px rgba(16,24,40,0.16);
 }
 
+html { -webkit-text-size-adjust: 100%; }
+
 body {
   font-family: var(--sans);
+  overflow-x: hidden;
+  -webkit-tap-highlight-color: transparent;
   background:
     radial-gradient(1000px 500px at 100% -10%, rgba(13,148,136,0.05), transparent 60%),
     var(--bg);
@@ -64,5 +68,5 @@ input, select, textarea {
 input:focus, select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-dim); }
 input::placeholder { color: var(--text-muted); }
 select option { background: var(--surface); color: var(--text); }
-button { font-family: var(--sans); cursor: pointer; }
+button { font-family: var(--sans); cursor: pointer; touch-action: manipulation; }
 h1, h2, h3 { letter-spacing: -0.3px; }
