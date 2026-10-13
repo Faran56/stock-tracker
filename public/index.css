@@ -1,0 +1,72 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg: #f4f5f7;
+  --surface: #ffffff;
+  --surface2: #f6f7f9;
+  --surface3: #eef0f3;
+  --border: #e3e5ea;
+  --border-soft: #ebedf1;
+  --navy: #10141d;
+  --navy-2: #1a2029;
+  --navy-text-muted: rgba(255,255,255,0.55);
+  --accent: #0d9488;
+  --accent-2: #14b8a6;
+  --accent-dim: rgba(13,148,136,0.10);
+  --accent-gradient: linear-gradient(135deg, #0d9488, #14b8a6);
+  --green: #16a34a;
+  --green-dim: rgba(22,163,74,0.12);
+  --red: #e11d48;
+  --red-dim: rgba(225,29,72,0.10);
+  --amber: #b45309;
+  --amber-dim: rgba(217,119,6,0.12);
+  --text: #111827;
+  --text-muted: #9aa1ac;
+  --text-sub: #667085;
+  --mono: 'JetBrains Mono', monospace;
+  --sans: 'Inter', sans-serif;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --shadow-sm: 0 1px 2px rgba(16,24,40,0.05);
+  --shadow-md: 0 4px 14px rgba(16,24,40,0.08);
+  --shadow-lg: 0 16px 36px rgba(16,24,40,0.16);
+}
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  font-family: var(--sans);
+  overflow-x: hidden;
+  -webkit-tap-highlight-color: transparent;
+  background:
+    radial-gradient(1000px 500px at 100% -10%, rgba(13,148,136,0.05), transparent 60%),
+    var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+}
+
+::-webkit-scrollbar { width: 7px; height: 7px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: var(--accent); }
+
+input, select, textarea {
+  font-family: var(--sans);
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+  font-size: 14px;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+input:focus, select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-dim); }
+input::placeholder { color: var(--text-muted); }
+select option { background: var(--surface); color: var(--text); }
+button { font-family: var(--sans); cursor: pointer; touch-action: manipulation; }
+h1, h2, h3 { letter-spacing: -0.3px; }
