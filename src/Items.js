@@ -99,6 +99,7 @@ export default function Items({
         <div className="gt-cell gt-title">
           <span className="item-name">{i.name}</span>
           {i.hidden && <span className="hidden-tag">Hidden</span>}
+          {i.internal && <span className="hidden-tag prod-tag">Production</span>}
         </div>
 
         <div className="gt-cell" data-label="Category">
@@ -109,6 +110,18 @@ export default function Items({
           >
             {catOptions.map(c => <option key={c} value={c}>{c}</option>)}
             <option value="__new__">＋ New category…</option>
+          </select>
+        </div>
+
+        <div className="gt-cell" data-label="Used for">
+          <select
+            className="cat-select"
+            value={i.internal ? 'production' : 'sale'}
+            onChange={e => onUpdateDefault(i.name, 'internal', e.target.value === 'production')}
+            title="Production materials are consumed in manufacturing, so they are left out of sales profit in Reports"
+          >
+            <option value="sale">Sale</option>
+            <option value="production">Production</option>
           </select>
         </div>
 
@@ -142,16 +155,18 @@ export default function Items({
 
         <div className="gt-cell" data-label="Price (AED)">
           <input
-            type="number" min="0" step="0.01" placeholder="0.00" inputMode="decimal"
+            type="number" min="0" step="0.01" inputMode="decimal"
             className="items-input"
-            value={i.raw.price}
+            placeholder={i.internal ? 'n/a' : '0.00'}
+            disabled={i.internal}
+            value={i.internal ? '' : i.raw.price}
             onChange={e => onUpdateDefault(i.name, 'price', e.target.value)}
           />
         </div>
 
         <div className="gt-cell gt-num" data-label="Margin">
-          <span className={i.margin == null ? 'text-muted' : i.margin < 0 ? 'neg-text' : 'profit-text'}>
-            {i.margin == null ? '—' : `${i.margin.toFixed(1)}%`}
+          <span className={i.internal || i.margin == null ? 'text-muted' : i.margin < 0 ? 'neg-text' : 'profit-text'}>
+            {i.internal || i.margin == null ? '—' : `${i.margin.toFixed(1)}%`}
           </span>
         </div>
 
@@ -179,8 +194,8 @@ export default function Items({
         <div>
           <h2>Items</h2>
           <p className="page-sub">
-            Your inventory in one place. Cost and price auto-fill new transactions. Hide items you no longer sell —
-            they stay in your history and reports.
+            Your inventory in one place. Cost and price auto-fill new transactions. Mark raw materials as
+            “Production” so they never count as a sale at a loss. Hide items you no longer use — they stay in your history.
           </p>
         </div>
         <div className="page-head-actions">
@@ -255,6 +270,7 @@ export default function Items({
         <div className="gt-head">
           <div className="gt-h sortable" onClick={() => headerSort('name')}>Item {sortArrow('name')}</div>
           <div className="gt-h sortable" onClick={() => headerSort('category')}>Category {sortArrow('category')}</div>
+          <div className="gt-h">Used for</div>
           <div className="gt-h sortable" onClick={() => headerSort('bal')}>In stock {sortArrow('bal')}</div>
           <div className="gt-h">Reorder at</div>
           <div className="gt-h">Cost (AED)</div>
@@ -292,4 +308,3 @@ export default function Items({
     </div>
   );
 }
-
