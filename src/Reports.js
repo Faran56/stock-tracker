@@ -18,7 +18,7 @@ const pct = (n) => `${Number(n || 0).toFixed(1)}%`;
 const DEFAULT_CATEGORY = 'General';
 const today = () => new Date().toISOString().slice(0, 10);
 
-const COLORS = ['#0d9488', '#16a34a', '#d97706', '#e11d48', '#7c3aed', '#0891b2', '#db2777', '#65a30d'];
+const COLORS = ['#0e7c86', '#2f6690', '#168a5b', '#b26b00', '#d03c52', '#6d5bd0', '#12949f', '#8a98a3'];
 const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 
 function monthLabel(m) {
@@ -165,12 +165,19 @@ function generateInsights({ totals, byCustomer, byProduct, saleRows, prevTotals,
 }
 
 const INSIGHT_META = {
-  positive: { color: '#16a34a', bg: 'rgba(22,163,74,0.1)', Icon: CheckCircle2 },
-  warning:  { color: '#e11d48', bg: 'rgba(225,29,72,0.1)', Icon: AlertTriangle },
-  info:     { color: '#0d9488', bg: 'rgba(13,148,136,0.1)', Icon: Info },
+  positive: { color: '#168a5b', bg: 'rgba(22,138,91,0.1)', Icon: CheckCircle2 },
+  warning:  { color: '#d03c52', bg: 'rgba(208,60,82,0.1)', Icon: AlertTriangle },
+  info:     { color: '#0e7c86', bg: 'rgba(14,124,134,0.1)', Icon: Info },
 };
 
-export default function Reports({ rows, products, itemDefaults, categories }) {
+export default function Reports({ rows, products: allProducts, itemDefaults, categories }) {
+  // Items flagged "production material" are consumed, not sold: they have no
+  // sales price, so counting them would make every order look like a loss.
+  const products = useMemo(
+    () => allProducts.filter(p => !itemDefaults?.[p]?.internal),
+    [allProducts, itemDefaults]
+  );
+
   const [exportNote, setExportNote] = useState(null);
   const [exporting, setExporting] = useState(false);
 
@@ -178,7 +185,10 @@ export default function Reports({ rows, products, itemDefaults, categories }) {
   const prodChartRef = useRef(null);
   const trendChartRef = useRef(null);
 
-  const allSaleRows = useMemo(() => rows.filter(r => r.type === 'out'), [rows]);
+  const allSaleRows = useMemo(
+    () => rows.filter(r => r.type === 'out' && r.purpose !== 'production' && products.some(p => Number(r.qty?.[p]) > 0)),
+    [rows, products]
+  );
 
   const availableMonths = useMemo(
     () => [...new Set(rows.map(r => (r.date || '').slice(0, 7)).filter(Boolean))].sort((a, b) => b.localeCompare(a)),
@@ -604,7 +614,7 @@ export default function Reports({ rows, products, itemDefaults, categories }) {
                 formatter={(v) => money(v)}
               />
               <Line type="monotone" dataKey="profit" stroke="#16a34a" strokeWidth={2.5} dot={{ r: 3 }} name="Profit" />
-              <Line type="monotone" dataKey="revenue" stroke="#0d9488" strokeWidth={1.5} dot={{ r: 2 }} strokeDasharray="4 3" name="Revenue" />
+              <Line type="monotone" dataKey="revenue" stroke="#0e7c86" strokeWidth={1.5} dot={{ r: 2 }} strokeDasharray="4 3" name="Revenue" />
             </LineChart>
           </ResponsiveContainer>
         )}
