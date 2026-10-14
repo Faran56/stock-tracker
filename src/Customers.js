@@ -77,7 +77,7 @@ function buildStats(rows, products, itemDefaults, customers, today) {
   customers.forEach(n => { byName[n] = byName[n] || { name: n, days: {} }; });
 
   rows.forEach(r => {
-    if (r.type !== 'out' || r.status === 'Cancelled') return;
+    if (r.type !== 'out' || r.purpose === 'production' || r.status === 'Cancelled') return;
     const name = (r.customer || '').trim();
     if (!name || !r.date) return;
     const c = byName[name] || (byName[name] = { name, days: {} });

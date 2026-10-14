@@ -70,6 +70,7 @@ export function buildItemInfo(products, itemDefaults, stock) {
       name,
       category: d.category || DEFAULT_CATEGORY,
       hidden: !!d.hidden,
+      internal: !!d.internal,
       cost, price, min, bal, tin, tout,
       raw: { cost: d.cost ?? '', price: d.price ?? '', min: d.minStock ?? '' },
       margin: price > 0 ? ((price - cost) / price) * 100 : null,
@@ -78,4 +79,19 @@ export function buildItemInfo(products, itemDefaults, stock) {
       alert: status !== 'ok' && moved,
     };
   });
+}
+
+// ── sales orders ─────────────────────────────────────────────────────────────
+export function orderTotals(order, vatRate) {
+  const subtotal = (order.lines || []).reduce((s, l) => s + (Number(l.qty) || 0) * (Number(l.price) || 0), 0);
+  const vat = order.vat ? subtotal * ((Number(vatRate) || 0) / 100) : 0;
+  return { subtotal, vat, total: subtotal + vat };
+}
+
+export function nextOrderNo(orders) {
+  const max = (orders || []).reduce((m, o) => {
+    const n = parseInt(String(o.no || '').replace(/\D/g, ''), 10);
+    return Number.isFinite(n) && n > m ? n : m;
+  }, 0);
+  return `SO-${String(max + 1).padStart(4, '0')}`;
 }
