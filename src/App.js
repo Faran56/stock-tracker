@@ -7,13 +7,15 @@ import {
   Plus, Upload, Trash2, Package, Users, X, CheckCircle, Clock, Truck, AlertCircle,
   Search, Download, RefreshCw, Edit2, ArrowUp, ArrowDown, ArrowUpDown, FileText,
   Truck as TruckIcon, BarChart3, ListChecks, Tag, SlidersHorizontal, ChevronDown,
+  ClipboardList, Database, Settings as SettingsIcon, MoreVertical, Factory,
 } from 'lucide-react';
 import Reports from './Reports';
 import Items from './Items';
 import Customers from './Customers';
+import SalesOrders from './SalesOrders';
 import { Modal, SearchableSelect } from './ui';
 import {
-  DEFAULT_CATEGORY, fmt, localToday, computeStock, buildItemInfo,
+  DEFAULT_CATEGORY, fmt, localToday, computeStock, buildItemInfo, prettyDate,
 } from './utils';
 import './App.css';
 
@@ -68,32 +70,39 @@ function defaultItemDefaults(prods) {
   return d;
 }
 
+const DEFAULT_SETTINGS = { company: 'Super Quality Trading LLC', vat: 5 };
+
+// Bring any saved / restored data up to the current shape.
+function normalizeState(parsed) {
+  parsed.products = parsed.products || INITIAL_PRODUCTS;
+  parsed.rows = parsed.rows || [];
+  if (!parsed.itemDefaults) parsed.itemDefaults = defaultItemDefaults(parsed.products);
+  const cats = new Set(parsed.categories || [DEFAULT_CATEGORY]);
+  parsed.products.forEach(p => {
+    if (!parsed.itemDefaults[p]) parsed.itemDefaults[p] = { cost: '', price: '', category: DEFAULT_CATEGORY };
+    if (!parsed.itemDefaults[p].category) parsed.itemDefaults[p].category = DEFAULT_CATEGORY;
+    cats.add(parsed.itemDefaults[p].category);
+  });
+  parsed.categories = [...cats];
+  // One-time clean-up: the old category box created a new category on every
+  // keystroke ("F", "Fi", "Fil"…). Drop categories that no item uses.
+  if (!parsed.catsCleaned) {
+    const used = new Set(parsed.products.map(p => parsed.itemDefaults[p].category));
+    parsed.categories = parsed.categories.filter(c => c === DEFAULT_CATEGORY || used.has(c));
+    parsed.catsCleaned = true;
+  }
+  if (!parsed.categories.includes(DEFAULT_CATEGORY)) parsed.categories.unshift(DEFAULT_CATEGORY);
+  parsed.customers = parsed.customers || [];
+  parsed.suppliers = parsed.suppliers || [];
+  parsed.orders = parsed.orders || [];
+  parsed.settings = { ...DEFAULT_SETTINGS, ...(parsed.settings || {}) };
+  return parsed;
+}
+
 function loadState() {
   try {
     const s = localStorage.getItem('stock_v3');
-    if (s) {
-      const parsed = JSON.parse(s);
-      parsed.products = parsed.products || INITIAL_PRODUCTS;
-      if (!parsed.itemDefaults) parsed.itemDefaults = defaultItemDefaults(parsed.products);
-      const cats = new Set(parsed.categories || [DEFAULT_CATEGORY]);
-      parsed.products.forEach(p => {
-        if (!parsed.itemDefaults[p]) parsed.itemDefaults[p] = { cost: '', price: '', category: DEFAULT_CATEGORY };
-        if (!parsed.itemDefaults[p].category) parsed.itemDefaults[p].category = DEFAULT_CATEGORY;
-        cats.add(parsed.itemDefaults[p].category);
-      });
-      parsed.categories = [...cats];
-      // One-time clean-up: the old category box created a new category on every
-      // keystroke ("F", "Fi", "Fil"…). Drop categories that no item uses.
-      if (!parsed.catsCleaned) {
-        const used = new Set(parsed.products.map(p => parsed.itemDefaults[p].category));
-        parsed.categories = parsed.categories.filter(c => c === DEFAULT_CATEGORY || used.has(c));
-        parsed.catsCleaned = true;
-      }
-      if (!parsed.categories.includes(DEFAULT_CATEGORY)) parsed.categories.unshift(DEFAULT_CATEGORY);
-      parsed.customers = parsed.customers || [];
-      parsed.suppliers = parsed.suppliers || [];
-      return parsed;
-    }
+    if (s) return normalizeState(JSON.parse(s));
     // migrate from v2 if present
     const old = localStorage.getItem('stock_v2');
     if (old) {
@@ -101,17 +110,17 @@ function loadState() {
       const rows = (parsed.rows || []).map(r => ({
         supplier: '', invoiceNo: '', deliveryNo: '', price: {}, cost: {}, ...r,
       }));
-      return {
+      return normalizeState({
         ...parsed, rows, suppliers: [],
         itemDefaults: defaultItemDefaults(parsed.products || INITIAL_PRODUCTS),
         categories: [DEFAULT_CATEGORY], catsCleaned: true,
-      };
+      });
     }
   } catch {}
-  return {
+  return normalizeState({
     products: INITIAL_PRODUCTS, rows: SEED_ROWS, customers: [], suppliers: [],
     itemDefaults: defaultItemDefaults(INITIAL_PRODUCTS), categories: [DEFAULT_CATEGORY], catsCleaned: true,
-  };
+  });
 }
 function saveState(state) {
   localStorage.setItem('stock_v3', JSON.stringify(state));
@@ -167,9 +176,9 @@ function CategoryRow({ name, count, locked, onRename, onDelete }) {
 // ─── App ─────────────────────────────────────────────────────────────────────
 export default function App() {
   const [state, setState] = useState(loadState);
-  const { products, rows, customers, suppliers, itemDefaults, categories } = state;
+  const { products, rows, customers, suppliers, itemDefaults, categories, orders, settings } = state;
 
-  const [activeTab, setActiveTab] = useState('tracker'); // tracker | items | customers | suppliers | reports
+  const [activeTab, setActiveTab] = useState('tracker'); // tracker | orders | items | customers | suppliers | reports
 
   const [showAddRow, setShowAddRow]   = useState(false);
   const [showAddProd, setShowAddProd] = useState(false);
@@ -179,6 +188,10 @@ export default function App() {
   const [catPrompt, setCatPrompt] = useState(null); // { product } while naming a new category
   const [catPromptName, setCatPromptName] = useState('');
   const [exportOpen, setExportOpen] = useState(false);
+  const [dataMenuOpen, setDataMenuOpen] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [settingsDraft, setSettingsDraft] = useState(DEFAULT_SETTINGS);
+  const [lastBackup, setLastBackup] = useState(() => localStorage.getItem('stock_last_backup') || '');
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [editingId, setEditingId]     = useState(null);
   const [filterStatus, setFilterStatus] = useState('All');
@@ -221,7 +234,7 @@ export default function App() {
       price[p] = row.price?.[p] || '';
       cost[p] = row.cost?.[p] || '';
     });
-    return { ...row, qty, price, cost };
+    return { ...row, type: row.type === 'out' && row.purpose === 'production' ? 'prod' : row.type, qty, price, cost };
   }
 
   function showToast(msg, type = 'success') {
@@ -245,7 +258,9 @@ export default function App() {
   const filtered = rows.filter(r => {
     if (selectedMonth !== 'All' && (r.date || '').slice(0, 7) !== selectedMonth) return false;
     if (filterStatus !== 'All' && r.status !== filterStatus) return false;
-    if (filterType !== 'All' && r.type !== filterType) return false;
+    if (filterType === 'prod' && r.purpose !== 'production') return false;
+    if (filterType === 'out' && (r.type !== 'out' || r.purpose === 'production')) return false;
+    if (filterType === 'in' && r.type !== 'in') return false;
     if (filterProduct !== 'All' && !Number(r.qty?.[filterProduct])) return false;
     if (search) {
       const q = search.toLowerCase();
@@ -311,21 +326,28 @@ export default function App() {
         : Number(costVal) || 0;
     });
 
-    const custName = form.customer?.trim();
-    const supName = form.supplier?.trim();
+    const isProd = form.type === 'prod';
+    const custName = isProd ? '' : form.customer?.trim();
+    const supName = form.type === 'in' ? form.supplier?.trim() : '';
+    const base = {
+      ...form,
+      type: isProd ? 'out' : form.type,
+      purpose: isProd ? 'production' : '',
+      customer: isProd ? '' : form.customer,
+    };
 
     if (editingId) {
       setState(s => ({
         ...s,
         rows: s.rows.map(r => r.id === editingId
-          ? { ...form, qty: cleanQty, price: cleanPrice, cost: cleanCost, id: editingId }
+          ? { ...base, qty: cleanQty, price: cleanPrice, cost: cleanCost, id: editingId }
           : r),
         customers: (custName && !s.customers.includes(custName)) ? [...s.customers, custName] : s.customers,
         suppliers: (supName && !s.suppliers.includes(supName)) ? [...s.suppliers, supName] : s.suppliers,
       }));
       showToast('Transaction updated');
     } else {
-      const row = { ...form, qty: cleanQty, price: cleanPrice, cost: cleanCost, id: uid() };
+      const row = { ...base, qty: cleanQty, price: cleanPrice, cost: cleanCost, id: uid() };
       setState(s => ({
         ...s,
         rows: [...s.rows, row],
@@ -543,6 +565,104 @@ export default function App() {
     showToast(`Category "${name}" deleted`, 'warn');
   }
 
+  // ── sales orders ───────────────────────────────────────────────────────────
+  function saveOrder(order) {
+    setState(s => {
+      const exists = order.id && s.orders.some(o => o.id === order.id);
+      const saved = { ...order, id: order.id || uid() };
+      return { ...s, orders: exists ? s.orders.map(o => (o.id === saved.id ? saved : o)) : [...s.orders, saved] };
+    });
+    showToast(order.id ? `${order.no} updated` : `${order.no} created`);
+  }
+
+  function deleteOrder(order) {
+    if (!window.confirm(`Delete ${order.no}?${order.status === 'Delivered' ? ' The stock-out sale it created is kept.' : ''}`)) return;
+    setState(s => ({ ...s, orders: s.orders.filter(o => o.id !== order.id) }));
+    showToast(`${order.no} deleted`, 'warn');
+  }
+
+  function deliverOrder(order) {
+    const short = order.lines.filter(l => (stock.balance[l.product] || 0) < Number(l.qty));
+    if (short.length > 0) {
+      const names = short.map(l => `${l.product} (have ${stock.balance[l.product] || 0}, need ${l.qty})`).join(', ');
+      if (!window.confirm(`Not enough stock for: ${names}.\n\nDeliver anyway? Stock will go negative.`)) return;
+    } else if (!window.confirm(`Mark ${order.no} as delivered? This records a stock-out sale for ${order.customer}.`)) return;
+
+    const qty = {}, price = {};
+    order.lines.forEach(l => { qty[l.product] = (qty[l.product] || 0) + Number(l.qty); price[l.product] = Number(l.price) || 0; });
+    const row = {
+      id: uid(), date: today(), description: `Sale · ${order.no}`, type: 'out', purpose: '',
+      customer: order.customer, supplier: '', invoiceNo: '', deliveryNo: '',
+      qty, price, cost: {}, status: 'Delivered', memo: order.ref ? `Ref ${order.ref}` : '', orderNo: order.no,
+    };
+    setState(s => ({
+      ...s,
+      rows: [...s.rows, row],
+      orders: s.orders.map(o => (o.id === order.id ? { ...o, status: 'Delivered', deliveredOn: today() } : o)),
+    }));
+    showToast(`${order.no} delivered — stock updated`);
+  }
+
+  // ── backup / restore / settings ────────────────────────────────────────────
+  function backupAll() {
+    const payload = {
+      app: 'stock-tracker', schema: 4, exportedAt: new Date().toISOString(), data: state,
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `stock-tracker-backup-${today()}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    const stamp = today();
+    localStorage.setItem('stock_last_backup', stamp);
+    setLastBackup(stamp);
+    setDataMenuOpen(false);
+    showToast('Backup downloaded');
+  }
+
+  function restoreFromFile(e) {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = '';
+    setDataMenuOpen(false);
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const parsed = JSON.parse(ev.target.result);
+        const data = parsed && parsed.data ? parsed.data : parsed;
+        if (!data || !Array.isArray(data.products) || !Array.isArray(data.rows)) throw new Error('bad');
+        const when = parsed.exportedAt ? ` from ${prettyDate(parsed.exportedAt.slice(0, 10))}` : '';
+        const msg = `Restore backup${when}?\n\nIt contains ${data.rows.length} transactions and ${data.products.length} items. ` +
+          'This REPLACES everything currently in the app. Download a backup first if you are unsure.';
+        if (!window.confirm(msg)) return;
+        setState(normalizeState(JSON.parse(JSON.stringify(data))));
+        showToast('Backup restored');
+      } catch {
+        showToast('That file is not a valid backup', 'warn');
+      }
+    };
+    reader.readAsText(file);
+  }
+
+  function openSettings() {
+    setSettingsDraft({ ...DEFAULT_SETTINGS, ...settings });
+    setDataMenuOpen(false);
+    setShowSettings(true);
+  }
+  function saveSettings() {
+    const vat = Math.max(0, Number(settingsDraft.vat) || 0);
+    setState(s => ({ ...s, settings: { company: settingsDraft.company.trim() || DEFAULT_SETTINGS.company, vat } }));
+    setShowSettings(false);
+    showToast('Settings saved');
+  }
+
+  const backupAge = lastBackup ? Math.floor((Date.now() - new Date(`${lastBackup}T00:00:00`).getTime()) / 86400000) : null;
+  const backupStale = backupAge == null || backupAge >= 7;
+
   // ── export ─────────────────────────────────────────────────────────────────
   function itemsText(r) {
     return products
@@ -554,7 +674,7 @@ export default function App() {
   function exportXLSX() {
     const data = rows.map(r => {
       const obj = {
-        Date: r.date, Description: r.description, Type: r.type,
+        Date: r.date, Description: r.description, Type: r.purpose === 'production' ? 'production' : r.type,
         Customer: r.customer, Supplier: r.supplier,
         'Invoice #': r.invoiceNo, 'Delivery #': r.deliveryNo,
       };
@@ -655,65 +775,123 @@ export default function App() {
   const formProducts = products.filter(p => !itemDefaults?.[p]?.hidden || Number(form.qty?.[p]) > 0);
   const modalProducts = formProducts.filter(p => p.toLowerCase().includes(productFilter.trim().toLowerCase()));
 
+  const openOrderCount = orders.filter(o => o.status === 'Draft' || o.status === 'Confirmed').length;
   const TABS = [
-    { id: 'tracker', label: 'Tracker', Icon: ListChecks },
-    { id: 'items', label: 'Items', Icon: Tag },
-    { id: 'customers', label: 'Customers', Icon: Users },
-    { id: 'suppliers', label: 'Suppliers', Icon: TruckIcon, count: suppliers.length },
-    { id: 'reports', label: 'Reports', Icon: BarChart3 },
+    { id: 'tracker', label: 'Tracker', short: 'Tracker', Icon: ListChecks },
+    { id: 'orders', label: 'Sales Orders', short: 'Orders', Icon: ClipboardList, count: openOrderCount },
+    { id: 'items', label: 'Items', short: 'Items', Icon: Tag },
+    { id: 'customers', label: 'Customers', short: 'Customers', Icon: Users },
+    { id: 'suppliers', label: 'Suppliers', short: 'Suppliers', Icon: TruckIcon },
+    { id: 'reports', label: 'Reports', short: 'Reports', Icon: BarChart3 },
   ];
 
+  const restoreInput = (
+    <input type="file" accept=".json,application/json" hidden onChange={restoreFromFile} />
+  );
+
   return (
-    <div className="app">
-      {/* ── header ── */}
-      <header className="app-header">
-        <div className="header-left">
-          <div className="logo-mark"><Package size={20} /></div>
-          <div>
-            <h1>Stock Tracker</h1>
-            <p className="header-sub">Water Treatment Products · UAE</p>
+    <div className="shell">
+      {/* ── sidebar (desktop) / bottom bar (phones) ── */}
+      <aside className="sidebar">
+        <div className="brand">
+          <div className="brand-mark"><Package size={19} /></div>
+          <div className="brand-text">
+            <div className="brand-name">Stock Tracker</div>
+            <div className="brand-sub">{settings.company}</div>
           </div>
         </div>
-        {activeTab === 'tracker' && (
-          <div className="header-actions">
-            <div className="menu-wrap">
-              <button className="btn btn-ghost" onClick={() => setExportOpen(o => !o)} aria-label="Export">
-                <Download size={15} /> <span className="hide-mobile">Export</span> <ChevronDown size={13} className="hide-mobile" />
-              </button>
-              {exportOpen && (
-                <>
-                  <div className="menu-backdrop" onClick={() => setExportOpen(false)} />
-                  <div className="menu">
-                    <div className="menu-label">Transactions</div>
-                    <button onClick={() => runExport(exportXLSX)}><Download size={14} /> Excel</button>
-                    <button onClick={() => runExport(exportPDF)}><FileText size={14} /> PDF (current filters)</button>
-                    <div className="menu-label">Balance stock</div>
-                    <button onClick={() => runExport(exportBalanceXLSX)}><Package size={14} /> Excel</button>
-                    <button onClick={() => runExport(exportBalancePDF)}><FileText size={14} /> PDF</button>
-                  </div>
-                </>
-              )}
-            </div>
-            <button className="btn btn-accent hide-mobile" onClick={openAddRow}>
-              <Plus size={15} /> Add Transaction
-            </button>
-          </div>
-        )}
-      </header>
 
-      {/* ── tab nav (top on desktop, bottom bar on phones) ── */}
-      <nav className="tab-nav">
-        {TABS.map(({ id, label, Icon, count }) => (
-          <button key={id} className={`tab-btn ${activeTab === id ? 'active' : ''}`} onClick={() => setActiveTab(id)}>
-            <Icon size={16} /> <span>{label}</span>
-            {count > 0 && <span className="chip hide-mobile">{count}</span>}
+        <nav className="side-nav">
+          {TABS.map(({ id, label, short, Icon, count }) => (
+            <button
+              key={id}
+              className={`side-link ${activeTab === id ? 'active' : ''}`}
+              onClick={() => setActiveTab(id)}
+              title={label}
+            >
+              <Icon size={18} />
+              <span className="lbl-full">{label}</span>
+              <span className="lbl-short">{short}</span>
+              {count > 0 && <span className="side-badge">{count}</span>}
+            </button>
+          ))}
+        </nav>
+
+        <div className="side-foot">
+          <button className="side-foot-btn" onClick={backupAll} title="Download a backup of all data">
+            <Database size={16} /> <span>Backup data</span>
+            {backupStale && <i className="dot-warn" />}
           </button>
-        ))}
-      </nav>
+          <label className="side-foot-btn" title="Restore from a backup file">
+            <Upload size={16} /> <span>Restore backup</span>{restoreInput}
+          </label>
+          <button className="side-foot-btn" onClick={openSettings} title="Company name and VAT">
+            <SettingsIcon size={16} /> <span>Settings</span>
+          </button>
+          <div className={`backup-note ${backupStale ? 'warn' : ''}`}>
+            {lastBackup ? `Last backup ${backupAge === 0 ? 'today' : `${backupAge}d ago`}` : 'No backup yet — data lives in this browser'}
+          </div>
+        </div>
+      </aside>
+
+      <div className="main">
+        {/* ── top bar (phones only) ── */}
+        <header className="topbar">
+          <div className="topbar-brand">
+            <div className="brand-mark"><Package size={17} /></div>
+            <span>{TABS.find(t => t.id === activeTab)?.label}</span>
+          </div>
+          <div className="menu-wrap">
+            <button className="topbar-btn" onClick={() => setDataMenuOpen(o => !o)} aria-label="Data and settings">
+              <MoreVertical size={20} />{backupStale && <i className="dot-warn" />}
+            </button>
+            {dataMenuOpen && (
+              <>
+                <div className="menu-backdrop" onClick={() => setDataMenuOpen(false)} />
+                <div className="menu">
+                  <button onClick={backupAll}><Database size={15} /> Backup all data</button>
+                  <label className="menu-item"><Upload size={15} /> Restore backup{restoreInput}</label>
+                  <button onClick={openSettings}><SettingsIcon size={15} /> Settings</button>
+                  <div className={`menu-note ${backupStale ? 'warn' : ''}`}>
+                    {lastBackup ? `Last backup ${backupAge === 0 ? 'today' : `${backupAge}d ago`}` : 'No backup yet'}
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        </header>
 
       {activeTab === 'tracker' && (
         <div className="page tracker-page">
-          {/* ── overview ── */}
+          <div className="page-head">
+            <div>
+              <h2>Transactions</h2>
+              <p className="page-sub">Every stock movement — purchases, sales and production use — in one place.</p>
+            </div>
+            <div className="page-head-actions">
+              <div className="menu-wrap">
+                <button className="btn btn-ghost" onClick={() => setExportOpen(o => !o)} aria-label="Export">
+                  <Download size={15} /> Export <ChevronDown size={13} />
+                </button>
+                {exportOpen && (
+                  <>
+                    <div className="menu-backdrop" onClick={() => setExportOpen(false)} />
+                    <div className="menu">
+                      <div className="menu-label">Transactions</div>
+                      <button onClick={() => runExport(exportXLSX)}><Download size={14} /> Excel</button>
+                      <button onClick={() => runExport(exportPDF)}><FileText size={14} /> PDF (current filters)</button>
+                      <div className="menu-label">Balance stock</div>
+                      <button onClick={() => runExport(exportBalanceXLSX)}><Package size={14} /> Excel</button>
+                      <button onClick={() => runExport(exportBalancePDF)}><FileText size={14} /> PDF</button>
+                    </div>
+                  </>
+                )}
+              </div>
+              <button className="btn btn-accent hide-mobile" onClick={openAddRow}>
+                <Plus size={15} /> Add Transaction
+              </button>
+            </div>
+          </div>
           <div className="stat-grid">
             <div className="stat-card">
               <span className="stat-label">Items</span>
@@ -787,6 +965,7 @@ export default function App() {
                 <select value={filterType} onChange={e => setFilterType(e.target.value)}>
                   <option value="All">In &amp; out</option>
                   <option value="out">Sales (out)</option>
+                  <option value="prod">Production use</option>
                   <option value="in">Purchases (in)</option>
                 </select>
               </label>
@@ -846,10 +1025,14 @@ export default function App() {
               const isOut = row.type === 'out';
               const hasRefs = row.invoiceNo || row.deliveryNo;
               return (
-                <div key={row.id} className={`gt-row tx-row ${isOut ? 'row-out' : 'row-in'}`}>
+                <div key={row.id} className={`gt-row tx-row ${row.purpose === 'production' ? 'row-prod' : isOut ? 'row-out' : 'row-in'}`}>
                   <div className="tx-date mono-cell">{row.date}</div>
                   <div className="tx-desc">{row.description}</div>
-                  <div className="tx-party customer-cell">{row.customer || row.supplier || <span className="text-muted">—</span>}</div>
+                  <div className="tx-party customer-cell">
+                    {row.purpose === 'production'
+                      ? <span className="pill pill-flat pill-amber"><Factory size={11} /> Production use</span>
+                      : (row.customer || row.supplier || <span className="text-muted">—</span>)}
+                  </div>
                   <div className={`tx-refs mono-cell ${hasRefs ? '' : 'is-empty'}`}>
                     {hasRefs ? (
                       <>
@@ -894,6 +1077,22 @@ export default function App() {
 
           <button className="fab" onClick={openAddRow} aria-label="Add transaction"><Plus size={24} /></button>
         </div>
+      )}
+
+      {activeTab === 'orders' && (
+        <SalesOrders
+          orders={orders}
+          customers={customers}
+          products={visibleProducts.filter(p => !itemDefaults?.[p]?.internal)}
+          itemDefaults={itemDefaults}
+          categories={categories}
+          stock={stock}
+          settings={settings}
+          onSave={saveOrder}
+          onDelete={deleteOrder}
+          onDeliver={deliverOrder}
+          onAddCustomer={addCustomer}
+        />
       )}
 
       {activeTab === 'items' && (
@@ -970,22 +1169,32 @@ export default function App() {
                 onChange={e => {
                   const newType = e.target.value;
                   const validStatuses = Object.keys(statusMetaFor(newType));
-                  setForm(f => ({
-                    ...f,
-                    type: newType,
-                    status: validStatuses.includes(f.status) ? f.status : validStatuses[1] || validStatuses[0],
-                  }));
+                  setForm(f => {
+                    let description = f.description;
+                    if (newType === 'prod' && (description === 'Sale' || !description)) description = 'Used in production';
+                    if (newType !== 'prod' && description === 'Used in production') description = newType === 'out' ? 'Sale' : '';
+                    return {
+                      ...f,
+                      type: newType,
+                      description,
+                      status: newType === 'prod' ? 'Delivered'
+                        : validStatuses.includes(f.status) ? f.status : validStatuses[1] || validStatuses[0],
+                    };
+                  });
                 }}
               >
                 <option value="in">Stock In</option>
                 <option value="out">Stock Out (Sale)</option>
+                <option value="prod">Used in production</option>
               </select>
             </label>
             <label className="span2">Description
               <input value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} />
             </label>
 
-            {form.type === 'out' ? (
+            {form.type === 'prod' ? (
+              <p className="span2 modal-hint prod-hint"><Factory size={13} /> Materials used in production are taken out of stock but never counted as a sale or a loss in Reports.</p>
+            ) : form.type === 'out' ? (
               <label className="span2">Customer
                 <SearchableSelect
                   value={form.customer}
@@ -1014,7 +1223,7 @@ export default function App() {
               <input value={form.deliveryNo || ''} onChange={e => setForm(f => ({ ...f, deliveryNo: e.target.value }))} placeholder="DEL-2002" />
             </label>
 
-            <div className="span2 price-table">
+            <div className={`span2 price-table ${form.type === 'prod' ? 'price-table--qty' : ''}`}>
               {formProducts.length > 6 && (
                 <div className="product-filter-input search-wrap">
                   <Search size={14} className="search-icon" />
@@ -1027,7 +1236,7 @@ export default function App() {
               )}
               <div className="price-table-head">
                 <span>Item</span><span>Qty</span>
-                <span>{form.type === 'out' ? 'Price (AED)' : 'Cost (AED)'}</span>
+                {form.type !== 'prod' && <span>{form.type === 'out' ? 'Price (AED)' : 'Cost (AED)'}</span>}
               </div>
               {groupProductsByCategory(modalProducts).map(group => (
                 <React.Fragment key={group.category}>
@@ -1040,7 +1249,7 @@ export default function App() {
                         value={form.qty[p] ?? ''}
                         onChange={e => setForm(f => ({ ...f, qty: { ...f.qty, [p]: e.target.value } }))}
                       />
-                      {form.type === 'out' ? (
+                      {form.type === 'prod' ? null : form.type === 'out' ? (
                         <input
                           type="number" min="0" step="0.01" inputMode="decimal"
                           placeholder={itemDefaults?.[p]?.price ? `${itemDefaults[p].price}` : '0.00'}
@@ -1214,6 +1423,23 @@ export default function App() {
         </Modal>
       )}
 
+      {/* ── Settings ── */}
+      {showSettings && (
+        <Modal title="Settings" onClose={() => setShowSettings(false)}>
+          <label className="stack-label">Company name (shown on sales order PDFs)
+            <input value={settingsDraft.company} onChange={e => setSettingsDraft(d => ({ ...d, company: e.target.value }))} />
+          </label>
+          <label className="stack-label">VAT rate (%)
+            <input type="number" min="0" step="0.5" inputMode="decimal" value={settingsDraft.vat}
+              onChange={e => setSettingsDraft(d => ({ ...d, vat: e.target.value }))} />
+          </label>
+          <div className="modal-footer">
+            <button className="btn btn-ghost" onClick={() => setShowSettings(false)}>Cancel</button>
+            <button className="btn btn-accent" onClick={saveSettings}>Save</button>
+          </div>
+        </Modal>
+      )}
+
       {/* ── Toast ── */}
       {toast && (
         <div className={`toast ${toast.type === 'warn' ? 'toast-warn' : ''}`}>
@@ -1221,6 +1447,7 @@ export default function App() {
           {toast.msg}
         </div>
       )}
+      </div>
     </div>
   );
 }
