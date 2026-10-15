@@ -7,12 +7,15 @@ import {
   Plus, Upload, Trash2, Package, Users, X, CheckCircle, Clock, Truck, AlertCircle,
   Search, Download, RefreshCw, Edit2, ArrowUp, ArrowDown, ArrowUpDown, FileText,
   Truck as TruckIcon, BarChart3, ListChecks, Tag, SlidersHorizontal, ChevronDown,
-  ClipboardList, Database, Settings as SettingsIcon, MoreVertical, Factory,
+  ClipboardList, Database, Settings as SettingsIcon, MoreVertical, Factory, LogOut, Loader2,
 } from 'lucide-react';
 import Reports from './Reports';
 import Items from './Items';
 import Customers from './Customers';
 import SalesOrders from './SalesOrders';
+import Login from './Login';
+import { watchAuth, signOutUser } from './cloud';
+import { useCloudSync } from './sync';
 import { Modal, SearchableSelect } from './ui';
 import {
   DEFAULT_CATEGORY, fmt, localToday, computeStock, buildItemInfo, prettyDate,
@@ -52,16 +55,6 @@ const ALL_STATUSES = [...new Set([...Object.keys(STATUS_META), ...Object.keys(IN
 
 const INITIAL_PRODUCTS = ['211G', 'Bwm 303', 'Bwm 777'];
 
-const SEED_ROWS = [
-  { id: uid(), date: '2026-06-11', description: 'Opening Stock', type: 'in',  customer: '', supplier: '', invoiceNo: '', deliveryNo: '', qty: { '211G': 2, 'Bwm 303': 0, 'Bwm 777': 0 }, price: {}, cost: {}, status: 'Received', memo: '' },
-  { id: uid(), date: '2026-06-11', description: 'Received from Somicon', type: 'in',  customer: '', supplier: 'Somicon', invoiceNo: '', deliveryNo: '', qty: { '211G': 31, 'Bwm 303': 24, 'Bwm 777': 5 }, price: {}, cost: {}, status: 'Received', memo: '' },
-  { id: uid(), date: '2026-06-11', description: 'Sale', type: 'out', customer: 'Matar Al Kutbi', supplier: '', invoiceNo: '', deliveryNo: '', qty: { '211G': 0, 'Bwm 303': 4, 'Bwm 777': 0 }, price: {}, cost: {}, status: 'Delivered', memo: '' },
-  { id: uid(), date: '2026-06-12', description: 'Sale', type: 'out', customer: 'Omar Al Rahba', supplier: '', invoiceNo: '', deliveryNo: '', qty: { '211G': 10, 'Bwm 303': 0, 'Bwm 777': 0 }, price: {}, cost: {}, status: 'Pending', memo: '' },
-  { id: uid(), date: '2026-06-12', description: 'Sale', type: 'out', customer: 'Sultan Al Habtoor', supplier: '', invoiceNo: '', deliveryNo: '', qty: { '211G': 5, 'Bwm 303': 0, 'Bwm 777': 0 }, price: {}, cost: {}, status: 'Pending', memo: '' },
-  { id: uid(), date: '2026-06-12', description: 'Sale', type: 'out', customer: 'Omar Al Khazna', supplier: '', invoiceNo: '', deliveryNo: '', qty: { '211G': 0, 'Bwm 303': 3, 'Bwm 777': 0 }, price: {}, cost: {}, status: 'Pending', memo: 'Pending cash for Filters' },
-  { id: uid(), date: '2026-06-12', description: 'Sale', type: 'out', customer: 'Al Hadeel', supplier: '', invoiceNo: '', deliveryNo: '', qty: { '211G': 0, 'Bwm 303': 6, 'Bwm 777': 0 }, price: {}, cost: {}, status: 'Pending', memo: 'Pending Water hardner' },
-  { id: uid(), date: '2026-06-12', description: 'Sale', type: 'out', customer: 'Adill', supplier: '', invoiceNo: '', deliveryNo: '', qty: { '211G': 0, 'Bwm 303': 0, 'Bwm 777': 20 }, price: {}, cost: {}, status: 'Pending', memo: '' },
-];
 
 // ─── load / save ─────────────────────────────────────────────────────────────
 function defaultItemDefaults(prods) {
@@ -118,7 +111,7 @@ function loadState() {
     }
   } catch {}
   return normalizeState({
-    products: INITIAL_PRODUCTS, rows: SEED_ROWS, customers: [], suppliers: [],
+    products: INITIAL_PRODUCTS, rows: [], customers: [], suppliers: [],
     itemDefaults: defaultItemDefaults(INITIAL_PRODUCTS), categories: [DEFAULT_CATEGORY], catsCleaned: true,
   });
 }
@@ -213,6 +206,15 @@ export default function App() {
   const [newProdCat, setNewProdCat] = useState(DEFAULT_CATEGORY);
 
   useEffect(() => { saveState(state); }, [state]);
+
+  // ── sign-in + cloud sync ──
+  const [user, setUser] = useState(null);
+  const [authReady, setAuthReady] = useState(false);
+  const [localOnly, setLocalOnly] = useState(false);
+  useEffect(() => watchAuth(u => { setUser(u); setAuthReady(true); }), []);
+  const sync = useCloudSync({
+    enabled: !!user && !localOnly, state, setState, normalize: normalizeState, userEmail: user?.email,
+  });
 
   function buildEmptyForm(prods) {
     const qty = {}, price = {}, cost = {};
@@ -637,7 +639,9 @@ export default function App() {
         if (!data || !Array.isArray(data.products) || !Array.isArray(data.rows)) throw new Error('bad');
         const when = parsed.exportedAt ? ` from ${prettyDate(parsed.exportedAt.slice(0, 10))}` : '';
         const msg = `Restore backup${when}?\n\nIt contains ${data.rows.length} transactions and ${data.products.length} items. ` +
-          'This REPLACES everything currently in the app. Download a backup first if you are unsure.';
+          'This REPLACES everything currently in the app' +
+          (sync.active && !localOnly ? ' — and, because cloud sync is on, on all your other devices too.' : '.') +
+          ' Download a backup first if you are unsure.';
         if (!window.confirm(msg)) return;
         setState(normalizeState(JSON.parse(JSON.stringify(data))));
         showToast('Backup restored');
@@ -775,6 +779,19 @@ export default function App() {
   const formProducts = products.filter(p => !itemDefaults?.[p]?.hidden || Number(form.qty?.[p]) > 0);
   const modalProducts = formProducts.filter(p => p.toLowerCase().includes(productFilter.trim().toLowerCase()));
 
+  if (!authReady) {
+    return <div className="login-shell"><Loader2 size={28} className="spin" color="var(--accent)" /></div>;
+  }
+  if (!user && !localOnly) return <Login onLocalOnly={() => setLocalOnly(true)} />;
+
+  const syncLabel = localOnly ? 'This device only'
+    : !sync.online ? 'Offline — saved on this device'
+    : sync.phase === 'connecting' ? 'Connecting…'
+    : sync.phase === 'syncing' ? 'Syncing…'
+    : sync.phase === 'error' ? 'Sync problem'
+    : 'Synced';
+  const syncClass = localOnly ? 'local' : !sync.online ? 'offline' : sync.phase;
+
   const openOrderCount = orders.filter(o => o.status === 'Draft' || o.status === 'Confirmed').length;
   const TABS = [
     { id: 'tracker', label: 'Tracker', short: 'Tracker', Icon: ListChecks },
@@ -818,6 +835,10 @@ export default function App() {
         </nav>
 
         <div className="side-foot">
+          <div className={`sync-chip sync-${syncClass}`} title={sync.message || syncLabel}>
+            <i /> <span className="sync-text">{syncLabel}</span>
+          </div>
+          {user && <div className="sync-user" title={user.email}>{user.email}</div>}
           <button className="side-foot-btn" onClick={backupAll} title="Download a backup of all data">
             <Database size={16} /> <span>Backup data</span>
             {backupStale && <i className="dot-warn" />}
@@ -828,8 +849,11 @@ export default function App() {
           <button className="side-foot-btn" onClick={openSettings} title="Company name and VAT">
             <SettingsIcon size={16} /> <span>Settings</span>
           </button>
+          {user
+            ? <button className="side-foot-btn" onClick={signOutUser} title="Sign out"><LogOut size={16} /> <span>Sign out</span></button>
+            : <button className="side-foot-btn" onClick={() => setLocalOnly(false)} title="Sign in to sync"><LogOut size={16} /> <span>Sign in to sync</span></button>}
           <div className={`backup-note ${backupStale ? 'warn' : ''}`}>
-            {lastBackup ? `Last backup ${backupAge === 0 ? 'today' : `${backupAge}d ago`}` : 'No backup yet — data lives in this browser'}
+            {lastBackup ? `Last backup ${backupAge === 0 ? 'today' : `${backupAge}d ago`}` : 'No backup yet'}
           </div>
         </div>
       </aside>
@@ -849,9 +873,14 @@ export default function App() {
               <>
                 <div className="menu-backdrop" onClick={() => setDataMenuOpen(false)} />
                 <div className="menu">
+                  <div className={`sync-chip sync-${syncClass} in-menu`}><i /> <span className="sync-text">{syncLabel}</span></div>
+                  {user && <div className="sync-user in-menu">{user.email}</div>}
                   <button onClick={backupAll}><Database size={15} /> Backup all data</button>
                   <label className="menu-item"><Upload size={15} /> Restore backup{restoreInput}</label>
                   <button onClick={openSettings}><SettingsIcon size={15} /> Settings</button>
+                  {user
+                    ? <button onClick={() => { setDataMenuOpen(false); signOutUser(); }}><LogOut size={15} /> Sign out</button>
+                    : <button onClick={() => { setDataMenuOpen(false); setLocalOnly(false); }}><LogOut size={15} /> Sign in to sync</button>}
                   <div className={`menu-note ${backupStale ? 'warn' : ''}`}>
                     {lastBackup ? `Last backup ${backupAge === 0 ? 'today' : `${backupAge}d ago`}` : 'No backup yet'}
                   </div>

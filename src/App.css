@@ -728,3 +728,32 @@
   .kpi-card, .highlight-card { min-width: 100%; }
   .side-link { font-size: 9.5px; }
 }
+
+/* ── sign-in + sync status ───────────────────────────────────────────────── */
+.login-shell { min-height: 100vh; min-height: 100dvh; display: flex; align-items: center; justify-content: center; padding: 20px; background: radial-gradient(1200px 600px at 20% -10%, rgba(14,124,134,0.16), transparent), var(--bg); }
+.login-card { width: 100%; max-width: 400px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow-md); padding: 30px 28px 24px; display: flex; flex-direction: column; gap: 16px; }
+.login-brand { display: flex; align-items: center; gap: 14px; margin-bottom: 6px; }
+.login-name { color: var(--text); font-size: 20px; }
+.login-sub { font-size: 12.5px; color: var(--text-muted); margin-top: 2px; }
+.login-btn { width: 100%; height: 44px; margin-top: 2px; }
+.login-links { display: flex; justify-content: space-between; }
+.login-foot { font-size: 11.5px; color: var(--text-muted); line-height: 1.5; text-align: center; }
+.form-note { background: var(--green-dim); color: var(--green); font-size: 13px; font-weight: 500; padding: 10px 12px; border-radius: 9px; }
+.spin { animation: spin 0.9s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.sync-chip { display: flex; align-items: center; gap: 9px; padding: 8px 12px 2px; font-size: 12px; font-weight: 600; color: rgba(255,255,255,0.78); }
+.sync-chip i { width: 8px; height: 8px; border-radius: 50%; background: #6b7b86; flex-shrink: 0; }
+.sync-synced i { background: #3ecf8e; box-shadow: 0 0 0 3px rgba(62,207,142,0.2); }
+.sync-syncing i, .sync-connecting i { background: #5bc0eb; animation: pulse 1s ease-in-out infinite; }
+.sync-offline i, .sync-local i { background: #f0a63a; }
+.sync-error i { background: #ff6b81; box-shadow: 0 0 0 3px rgba(255,107,129,0.2); }
+@keyframes pulse { 50% { opacity: 0.35; } }
+.sync-user { font-size: 11px; color: rgba(255,255,255,0.42); padding: 0 12px 8px 29px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sync-chip.in-menu { color: var(--text); padding: 10px 10px 2px; }
+.sync-user.in-menu { color: var(--text-muted); padding: 0 10px 8px 28px; }
+
+@media (max-width: 1100px) and (min-width: 769px) {
+  .sync-text, .sync-user { display: none; }
+  .sync-chip { justify-content: center; padding: 8px 0; }
+}
